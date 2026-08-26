@@ -79,6 +79,27 @@ que le dépôt est bien lisible :
 
 Les deux doivent renvoyer le contenu du fichier, pas une erreur 404.
 
+## Fluidité sur TV
+
+Un CPU de Samsung TV est environ 10 à 20 fois plus lent qu'un PC. Trois réglages
+comptent, tous en haut de `inject.js` :
+
+| Constante | Effet |
+|---|---|
+| `PAUSE_DECOR_VIDEOS` | Fige les 8 MP4 en boucle qui décorent les cartes de l'accueil (logos Netflix, Disney+…, servis par giphy/tenor). C'est le principal gain : huit boucles vidéo en fond suffisent à saccader toute l'interface sur une TV. Le lecteur n'est jamais touché. |
+| `ADBLOCK` | Voir plus haut. Coût mesuré négligeable (0,7 ms par balayage, et seulement quand le DOM bouge). |
+
+Autres corrections de fluidité, sans réglage :
+
+- Défilement **instantané** au lieu de `behavior: "smooth"` — l'ancien empilait
+  une animation par appui sur une flèche, d'où la télécommande qui « traîne ».
+- Un seul minuteur de focus en attente : les rendus React empilaient des
+  dizaines de `initFocus()` qui se disputaient le focus.
+- Anneau de focus allégé (plus de flou de 24 px à repeindre à chaque
+  déplacement).
+- Liste des cibles mise en cache 400 ms au lieu d'être reconstruite à chaque
+  appui.
+
 ## Raccourcis télécommande
 
 | Touche | Hors lecteur | Dans le lecteur |

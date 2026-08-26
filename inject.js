@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v3.2
+ * Movix TizenBrew — inject.js v3.3
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -12,6 +12,7 @@
  *  - Retour player       → bouton "← Retour"
  *  - Touches couleurs    → raccourcis Recherche / Accueil / À voir / Favoris
  *  - Anti-pub            → popups, iframes tierces, pièges à clic (ADBLOCK)
+ *  - Fluidité TV         → vidéos décoratives figées, défilement instantané
  *
  * Note compatibilité : pas de `?.` ni de syntaxe ES2020+, les WebViews Tizen
  * 3.x/4.x (Chromium 47/56) refusent de parser le fichier entier sinon.
@@ -33,11 +34,9 @@
 .tz-focus {
   outline: 4px solid #e50914 !important;
   outline-offset: 3px !important;
-  box-shadow:
-    0 0 0 6px rgba(229, 9, 20, 0.3),
-    0 0 24px rgba(229, 9, 20, 0.5) !important;
-  transform: scale(1.07) !important;
-  transition: transform 0.12s ease, box-shadow 0.12s ease !important;
+  box-shadow: 0 0 0 6px rgba(229, 9, 20, 0.35) !important;
+  transform: scale(1.06) !important;
+  transition: transform 0.1s linear !important;
   z-index: 9999 !important;
   position: relative !important;
 }
@@ -47,8 +46,7 @@
 .tz-focus[class*="Card"],
 .tz-focus[class*="poster"],
 .tz-focus[class*="Poster"] {
-  transform: scale(1.12) !important;
-  box-shadow: 0 10px 40px rgba(229, 9, 20, 0.55) !important;
+  transform: scale(1.1) !important;
 }
 
 /* Boutons : léger fond rouge */
@@ -168,6 +166,10 @@ body::after {
     return el.textContent.trim().length < 5;
   }
 
+  // Le balayage des pièges à clic inspecte le style calculé de dizaines
+  // d'éléments : on ne le relance que si le DOM a effectivement bougé.
+  let adDirty = true;
+
   function sweepAds() {
     // Iframes : après le layout, on sait lesquelles sont réellement invisibles.
     const frames = document.querySelectorAll("iframe");
@@ -180,6 +182,8 @@ body::after {
     }
 
     // Pièges à clic : ils sont réinjectés en boucle, d'où le balayage répété.
+    if (!adDirty) return;
+    adDirty = false;
     const candidates = document.querySelectorAll("body > *, body > * > *");
     for (const el of candidates) {
       if (isClickTrap(el)) el.remove();
@@ -205,21 +209,47 @@ body::after {
     window.open = function () { return null; };
     document.addEventListener("click", onClickCapture, true);
 
+    // Ce callback se déclenche à chaque rendu React : il doit rester trivial.
+    // L'ancienne version appelait querySelectorAll sur chaque nœud ajouté,
+    // ce qui plombait toute l'interface. On se contente de lever un drapeau.
     new MutationObserver((ms) => {
       for (const m of ms) {
         for (const n of m.addedNodes) {
           if (n.nodeType !== 1) continue;
           if (n.tagName === "IFRAME") hardenIframe(n);
-          else if (n.querySelectorAll) {
-            const inner = n.querySelectorAll("iframe");
-            for (const f of inner) hardenIframe(f);
-          }
+          else adDirty = true;
         }
       }
     }).observe(document.documentElement, { childList: true, subtree: true });
 
     sweepAds();
-    setInterval(sweepAds, 1500);
+    setInterval(sweepAds, 2500);
+  }
+
+  // ── Vidéos décoratives ────────────────────────────────────────────────────
+  //
+  // La page d'accueil de Movix décore ses cartes avec huit MP4 en boucle
+  // (logos Netflix, Disney+, Apple TV… servis par giphy et tenor). Sur un PC
+  // ça ne se voit pas, sur le CPU d'une TV huit boucles vidéo en fond suffisent
+  // à saccader toute l'interface. On les fige partout sauf dans le lecteur.
+  // Passer à false pour les réactiver.
+  const PAUSE_DECOR_VIDEOS = true;
+
+  function freezeDecorVideos() {
+    if (!PAUSE_DECOR_VIDEOS || detectPage() === "player") return;
+    for (const v of document.querySelectorAll("video[loop]")) {
+      v.removeAttribute("autoplay");
+      v.preload = "none";
+      if (!v.paused) v.pause();
+    }
+  }
+
+  // Elles démarrent au survol/focus : on les rattrape à la source plutôt que
+  // d'attendre le prochain passage du minuteur.
+  function onPlayCapture(e) {
+    const v = e.target;
+    if (!PAUSE_DECOR_VIDEOS) return;
+    if (v && v.tagName === "VIDEO" && v.loop && detectPage() !== "player") v.pause();
   }
 
   // ── Keycodes Samsung Tizen ─────────────────────────────────────────────────
@@ -248,23 +278,46 @@ body::after {
 
   // ── Utilitaires ────────────────────────────────────────────────────────────
 
+  // Pas de getComputedStyle ici : c'est un recalcul de style par élément, et on
+  // en testait une centaine à chaque appui sur une flèche. offsetParent === null
+  // couvre display:none, le seul cas vraiment fréquent, pour bien moins cher.
   function isVisible(el) {
+    if (el.hasAttribute("disabled")) return false;
+    if (el.offsetParent === null) return false;
     const r = el.getBoundingClientRect();
-    const s = window.getComputedStyle(el);
-    return r.width > 0 && r.height > 0
-      && s.visibility !== "hidden"
-      && s.display    !== "none"
-      && s.opacity    !== "0"
-      && !el.hasAttribute("disabled");
+    return r.width > 0 && r.height > 0;
+  }
+
+  // Liste des cibles mise en cache. Sans ça, chaque appui sur une flèche
+  // reconstruisait la liste complète et mesurait ~100 éléments : c'était la
+  // cause principale de la latence de la navigation.
+  let focusCache = null;
+  let focusCacheAt = 0;
+
+  function invalidateFocusCache() {
+    focusCache = null;
   }
 
   function getFocusable() {
-    return Array.from(document.querySelectorAll(FOCUSABLE)).filter(isVisible);
-  }
+    const now = Date.now();
+    if (focusCache && now - focusCacheAt < 400) return focusCache;
 
-  function center(el) {
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    const vh = window.innerHeight || 720;
+    const vw = window.innerWidth || 1280;
+    const out = [];
+    for (const el of document.querySelectorAll(FOCUSABLE)) {
+      if (!isVisible(el)) continue;
+      const r = el.getBoundingClientRect();
+      // On écarte ce qui est très loin hors écran. Sinon une flèche pouvait
+      // sauter dans le pied de page au lieu d'aller à la carte d'à côté.
+      // La marge d'un écran entier laisse toujours de quoi défiler.
+      if (r.bottom < -vh || r.top > vh * 2) continue;
+      if (r.right < -vw || r.left > vw * 2) continue;
+      out.push(el);
+    }
+    focusCache = out;
+    focusCacheAt = now;
+    return out;
   }
 
   // Vrai si l'utilisateur est en train de saisir du texte : on rend alors
@@ -283,23 +336,41 @@ body::after {
     if (!els.length) return null;
     if (!currentFocus || !document.contains(currentFocus)) return els[0];
 
-    const cc = center(currentFocus);
+    // Distances de bord à bord + recouvrement sur l'axe perpendiculaire.
+    // L'ancienne version comparait des centres, ce qui envoyait la sélection
+    // en diagonale au lieu de suivre la ligne ou la colonne.
+    const cr = currentFocus.getBoundingClientRect();
     let best = null, bestScore = Infinity;
 
     for (const el of els) {
       if (el === currentFocus) continue;
-      const ec = center(el);
-      const dx = ec.x - cc.x, dy = ec.y - cc.y;
-      let ok = false, primary = 0, secondary = 0;
+      const r = el.getBoundingClientRect();
+      let primary = 0, overlap = 0;
 
       switch (dir) {
-        case "left":  ok = dx < -5; primary = -dx; secondary = Math.abs(dy); break;
-        case "right": ok = dx >  5; primary =  dx; secondary = Math.abs(dy); break;
-        case "up":    ok = dy < -5; primary = -dy; secondary = Math.abs(dx); break;
-        case "down":  ok = dy >  5; primary =  dy; secondary = Math.abs(dx); break;
+        case "left":
+          primary = cr.left - r.right;
+          overlap = Math.min(cr.bottom, r.bottom) - Math.max(cr.top, r.top);
+          break;
+        case "right":
+          primary = r.left - cr.right;
+          overlap = Math.min(cr.bottom, r.bottom) - Math.max(cr.top, r.top);
+          break;
+        case "up":
+          primary = cr.top - r.bottom;
+          overlap = Math.min(cr.right, r.right) - Math.max(cr.left, r.left);
+          break;
+        case "down":
+          primary = r.top - cr.bottom;
+          overlap = Math.min(cr.right, r.right) - Math.max(cr.left, r.left);
+          break;
       }
-      if (!ok) continue;
-      const score = primary + secondary * 2.5;
+      if (primary < -5) continue; // l'élément est derrière nous
+
+      // Un élément aligné avec le focus courant bat toujours un élément en
+      // diagonale : c'est ce qui rend la navigation prévisible.
+      const misalignment = overlap > 0 ? 0 : -overlap;
+      const score = Math.max(primary, 0) + misalignment * 4;
       if (score < bestScore) { bestScore = score; best = el; }
     }
     return best;
@@ -315,7 +386,9 @@ body::after {
     el.classList.add("tz-focus");
     el.setAttribute("data-tz", "1");
     el.focus({ preventScroll: true });
-    el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    // Défilement instantané : le "smooth" empilait une animation par appui,
+    // ce qui donnait cette impression de télécommande qui traîne.
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
 
   function navigate(dir) {
@@ -523,8 +596,14 @@ body::after {
 
   // ── Focus initial selon la page ────────────────────────────────────────────
 
+  // Un seul minuteur en attente : les mutations React déclenchaient des dizaines
+  // de initFocus() empilés, qui se battaient pour poser le focus.
+  let focusTimer = null;
+
   function initFocus() {
-    setTimeout(() => {
+    if (focusTimer) clearTimeout(focusTimer);
+    focusTimer = setTimeout(() => {
+      focusTimer = null;
       const page = detectPage();
       let target = null;
 
@@ -557,6 +636,7 @@ body::after {
       if (location.pathname !== lastPath) {
         lastPath = location.pathname;
         currentFocus = null;
+        invalidateFocusCache();
         initFocus();
       }
     }, 250);
@@ -591,11 +671,13 @@ body::after {
     initialized = true;
     injectStyle();
     initAdBlock();
+    document.addEventListener("play", onPlayCapture, true);
+    setInterval(freezeDecorVideos, 2500);
     registerKeys();
     document.addEventListener("keydown", onKeyDown, true);
     setupObserver();
     initFocus();
-    console.log("[Movix TizenBrew v3.2] page:", detectPage());
+    console.log("[Movix TizenBrew v3.3] page:", detectPage());
   }
 
   document.readyState === "loading"
