@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.4
+ * Movix TizenBrew — inject.js v5.5
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -17,7 +17,7 @@
  *  - Bord gauche/droite  → fait défiler la rangée de films sous le curseur
  *  - Le curseur          → jamais masqué, jamais estompé, jamais désactivé
  *  - OK                  → clic à la position du curseur
- *  - Retour              → page précédente
+ *  - Retour              → page précédente, et ramène toujours sur Movix
  *  - Touches médias      → contrôlent la vidéo, toujours et partout
  *  - Plein écran         → touche bleue uniquement
  *  - Touches couleurs    → Recherche / Accueil / À voir
@@ -345,16 +345,28 @@ button, [role="button"] {
   const held = { left: 0, right: 0, up: 0, down: 0 };
 
   function ensureCursor() {
-    if (cursorEl && document.contains(cursorEl)) return;
-    cursorEl = document.getElementById(CURSOR_ID);
-    if (!cursorEl) {
-      cursorEl = document.createElement("div");
-      cursorEl.id = CURSOR_ID;
-      document.body.appendChild(cursorEl);
-      cx = (window.innerWidth || 1280) / 2;
-      cy = (window.innerHeight || 720) / 2;
+    if (!document.body) return;
+
+    if (!cursorEl || !document.contains(cursorEl)) {
+      cursorEl = document.getElementById(CURSOR_ID);
+      if (!cursorEl) {
+        cursorEl = document.createElement("div");
+        cursorEl.id = CURSOR_ID;
+        document.body.appendChild(cursorEl);
+        cx = (window.innerWidth || 1280) / 2;
+        cy = (window.innerHeight || 720) / 2;
+      }
+      paintCursor();
+      return;
     }
-    paintCursor();
+
+    // Le curseur doit rester le dernier enfant de <body>. Movix monte ses
+    // fenêtres modales — connexion, phrase secrète, écran publicitaire — dans
+    // un conteneur ajouté après coup, et un élément ajouté plus tard peut se
+    // peindre par-dessus. Le remettre en dernier garantit qu'il reste visible.
+    if (document.body.lastElementChild !== cursorEl) {
+      document.body.appendChild(cursorEl);
+    }
   }
 
   let paintedX = null, paintedY = null;
@@ -463,8 +475,14 @@ button, [role="button"] {
   function scrollPageStep(dir, now) {
     if (now - lastScrollAt < SCROLL_STEP_MS) return;
     lastScrollAt = now;
-    const h = window.innerHeight || 720;
-    window.scrollBy(0, dir * Math.round(h * SCROLL_STEP_RATIO));
+    const delta = dir * Math.round((window.innerHeight || 720) * SCROLL_STEP_RATIO);
+
+    // Movix charge Lenis (défilement fluide). On pourrait croire qu'il faut
+    // passer par son API pour ne pas se battre avec sa boucle d'animation.
+    // C'est faux, et c'est mesuré : sur movix.fun avec Lenis actif, un
+    // scrollBy natif s'applique et tient (0 → 288 → 288 px après 400 ms),
+    // tandis que lenis.scrollTo() ne déplace rien du tout. On reste au natif.
+    window.scrollBy(0, delta);
   }
 
   function scrollRowStep(el, dir, now) {
@@ -651,19 +669,6 @@ button, [role="button"] {
     return true;
   }
 
-  // Bouton "← Retour" du player, repéré par son texte ou son icône.
-  function clickRetour() {
-    const btns = document.querySelectorAll("button");
-    for (const b of btns) {
-      if (b.textContent.trim().includes("Retour") || b.querySelector("path[d*='M10 19l-7-7']")) {
-        b.click();
-        return true;
-      }
-    }
-    window.history.back();
-    return true;
-  }
-
   function handlePlayerKeys(kc) {
     switch (kc) {
       case KEY.SPACE:
@@ -708,12 +713,6 @@ button, [role="button"] {
         return false;
       }
 
-      case KEY.BACK:
-      case KEY.RETURN:
-        return clickRetour();
-
-      case KEY.ENTER:
-        return togglePlayPause();
     }
     return false;
   }
@@ -750,6 +749,42 @@ button, [role="button"] {
         return toggleFullscreen();
     }
     return false;
+  }
+
+  // ── Retour : toujours une issue ────────────────────────────────────────────
+  //
+  // Une pub peut emmener le navigateur hors de Movix, sur une page dont on ne
+  // revient pas : l'entrée d'historique est parfois remplacée, et history.back()
+  // n'a alors nulle part où aller. Sur une TV, l'utilisateur est bloqué.
+  //
+  // TizenBrew réinjecte ce script dans chaque nouveau contexte, quel que soit le
+  // domaine : Retour reste donc opérant sur la page publicitaire, et peut nous
+  // ramener de force.
+  const HOME = "https://movix.fun/";
+  const BACK_FALLBACK_MS = 700;
+
+  function onMovix() {
+    const h = location.hostname;
+    return h === "movix.fun" || h.endsWith(".movix.fun");
+  }
+
+  function goBack() {
+    if (!onMovix()) {          // une pub nous a fait sortir : on rentre
+      location.href = HOME;
+      return true;
+    }
+    // Sans historique, on laisse passer : c'est ce qui permet de quitter le
+    // module et de revenir au launcher TizenBrew.
+    if (window.history.length <= 1) return false;
+
+    const before = location.href;
+    window.history.back();
+    // history.back() est asynchrone et peut ne rien faire. Si rien n'a bougé,
+    // on rentre à l'accueil : ce n'est jamais un cul-de-sac.
+    setTimeout(function () {
+      if (location.href === before) location.href = HOME;
+    }, BACK_FALLBACK_MS);
+    return true;
   }
 
   // ── Handler principal ──────────────────────────────────────────────────────
@@ -801,12 +836,7 @@ button, [role="button"] {
 
       case KEY.BACK:
       case KEY.RETURN:
-        // Sans historique, on laisse passer : c'est ce qui permet de quitter le
-        // module et de revenir au launcher TizenBrew.
-        if (window.history.length > 1) {
-          window.history.back();
-          e.preventDefault();
-        }
+        if (goBack()) e.preventDefault();
         break;
     }
   }
@@ -866,9 +896,9 @@ button, [role="button"] {
     document.addEventListener("play", onPlayCapture, true);
     document.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("keyup", onKeyUp, true);
-    setInterval(housekeeping, 1000);
+    setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v5.4] curseur actif");
+    console.log("[Movix TizenBrew v5.5] curseur actif");
   }
 
   document.readyState === "loading"

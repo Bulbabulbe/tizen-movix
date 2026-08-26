@@ -42,7 +42,7 @@ déplacent toujours le curseur, les touches médias pilotent toujours la vidéo.
 | Curseur collé au bord ↑ ou ↓ | Fait défiler la page, par paliers |
 | Curseur collé au bord ← ou → | Fait défiler la rangée de films, par paliers |
 | OK | Clic à la position du curseur |
-| Retour | Page précédente, ou sortie du champ de recherche |
+| Retour | Page précédente — et **ramène toujours sur Movix** si une pub vous en a sorti |
 | ⏯ ⏵ ⏸ | Play / Pause |
 | ⏩ ⏪ | +10 s / −10 s |
 | ⏹ | Stop (retour au début) |
@@ -368,3 +368,44 @@ de User-Agent.
 Votre session Movix persiste donc comme dans un navigateur ordinaire, aussi
 longtemps que le cookie de Movix reste valide et que la TV ne vide pas les
 données du navigateur.
+
+## Retour : jamais de cul-de-sac
+
+Une publicité peut emmener le navigateur hors de Movix, sur une page dont
+`history.back()` ne revient pas — l'entrée d'historique est parfois remplacée.
+Sur une TV, l'utilisateur est alors bloqué sans barre d'adresse.
+
+TizenBrew réinjecte le script dans **chaque** nouveau contexte JavaScript, quel
+que soit le domaine. La touche Retour reste donc active sur la page
+publicitaire, et :
+
+- hors du domaine Movix → retour immédiat sur `movix.fun` ;
+- sur Movix, si `history.back()` n'a rien déplacé au bout de 700 ms → retour à
+  l'accueil.
+
+Sur la première page, sans historique, Retour est laissé au système : c'est ce
+qui permet de quitter le module et de revenir au launcher TizenBrew.
+
+### Pourquoi la publicité n'est pas simplement bloquée
+
+Parce que Movix conditionne la lecture à un bouton « Voir une publicité » qui
+appelle `window.open`. Bloquer ce parcours signifie **aucun film ne démarre**.
+Le compromis retenu : la popup passe si elle suit un appui sur OK dans la
+seconde, sinon elle est bloquée — et si elle vous emmène ailleurs, Retour vous
+ramène.
+
+## Découvertes sur le site, vérifiées
+
+Notes utiles à qui reprendra ce module, chacune mesurée sur `movix.fun` :
+
+- **Les modales mettent `pointer-events: none` sur `<body>`.** Tant qu'une
+  fenêtre modale est ouverte, aucun élément extérieur n'est atteignable par
+  `elementFromPoint`, quel que soit son `z-index` — testé de `51` à
+  `2147483647`, tous perdent. Seul un `pointer-events: auto` explicite change
+  quelque chose. Ce n'est ni le top layer, ni un `<dialog>`, ni un débordement
+  d'entier : ces trois pistes ont été écartées par le test.
+- **Movix charge Lenis** (défilement fluide), mais il ne faut **pas** passer par
+  son API : avec Lenis actif, `window.scrollBy` s'applique et tient
+  (0 → 288 → 288 px), tandis que `lenis.scrollTo()` ne déplace rien.
+- **Le lecteur ne démarre qu'après l'écran publicitaire**, monté dans
+  `#movix-overlay-root` en `fixed inset-0 z-50`.
