@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v4.0
+ * Movix TizenBrew — inject.js v4.1
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -13,7 +13,9 @@
  * haut ou le bas de l'écran.
  *
  *  - Flèches             → déplacent le curseur (accélère si on maintient)
- *  - Bord haut/bas       → fait défiler la page
+ *  - Bord haut/bas       → fait défiler la page, tant qu'il reste du contenu ;
+ *                          en butée le curseur atteint bien le bord de l'écran
+ *  - Bord gauche/droite  → fait défiler la rangée de films sous le curseur
  *  - OK                  → clic à la position du curseur
  *  - Retour              → page précédente
  *  - Dans le lecteur     → contrôle direct de la balise <video>, curseur masqué
@@ -44,7 +46,9 @@
   left: 0;
   width: 38px;
   height: 38px;
-  margin: -3px 0 0 -3px;
+  /* Aligne la pointe de la flèche sur le point de clic réel, pas le coin de la
+     boîte : la pointe du tracé SVG tombe à ~(8, 3) dans une boîte de 38 px. */
+  margin: -3px 0 0 -8px;
   pointer-events: none;
   z-index: 2147483647;
   will-change: transform;
@@ -274,10 +278,14 @@ body::after {
   const SPEED_MIN   = 520;   // départ lent, pour viser précisément
   const SPEED_MAX   = 2400;  // maintenu, on traverse l'écran en ~1 s
   const ACCEL       = 2.4;   // facteur d'accélération par seconde
-  const EDGE        = 80;    // à moins de 80 px du bord, la page défile
-  const SCROLL_MULT = 1.3;   // le défilement suit la vitesse du curseur
-  const KEY_TIMEOUT = 260;   // sans nouvel appui, la touche est jugée relâchée
-  const HOVER_MS    = 120;   // fréquence des mousemove de synthèse
+  const EDGE         = 70;    // à moins de 70 px du bord, ça défile
+  const SCROLL_SPEED = 1100;  // px/s — volontairement indépendant de la vitesse
+                              // du curseur : indexer le défilement sur une
+                              // vitesse qui accélère jusqu'à 2400 px/s faisait
+                              // s'emballer la page.
+  const ROW_RECHECK  = 200;   // ms entre deux recherches de rangée sous le curseur
+  const KEY_TIMEOUT  = 260;   // sans nouvel appui, la touche est jugée relâchée
+  const HOVER_MS     = 120;   // fréquence des mousemove de synthèse
 
   let cursorEl = null;
   let cx = 0, cy = 0;
@@ -285,6 +293,8 @@ body::after {
   let loopId = null;
   let lastTick = 0;
   let lastHover = 0;
+  let rowTarget = null;
+  let rowCheckedAt = 0;
   const held = { left: 0, right: 0, up: 0, down: 0 };
 
   function ensureCursor() {
@@ -340,6 +350,61 @@ body::after {
     }
   }
 
+  // ── Défilement ─────────────────────────────────────────────────────────────
+  //
+  // Toujours en pixels entiers. Envoyer des valeurs sous-pixel à scrollBy
+  // soixante fois par seconde faisait trembler la page ; on accumule les
+  // fractions et on ne défile que par pas entiers.
+  let accY = 0, accX = 0;
+
+  function scrollPage(amount) {
+    accY += amount;
+    const whole = accY > 0 ? Math.floor(accY) : Math.ceil(accY);
+    if (!whole) return;
+    accY -= whole;
+    window.scrollBy(0, whole);
+  }
+
+  function scrollRow(el, amount) {
+    accX += amount;
+    const whole = accX > 0 ? Math.floor(accX) : Math.ceil(accX);
+    if (!whole) return;
+    accX -= whole;
+    el.scrollLeft += whole;
+  }
+
+  function canScrollPage(dir) {
+    if (dir < 0) return window.pageYOffset > 0;
+    const de = document.documentElement;
+    return window.pageYOffset + window.innerHeight < de.scrollHeight - 1;
+  }
+
+  // Les rangées de films sont des carrousels à défilement horizontal (Embla).
+  // Sans ça on ne voit que les premières cartes de chaque rangée : sur la page
+  // d'accueil, 1118 px visibles pour 8944 px de contenu. Leur overflow-x vaut
+  // "hidden", mais scrollLeft reste pilotable — vérifié sur movix.fun.
+  function findRowUnderCursor() {
+    let el = elementUnderCursor();
+    while (el && el !== document.body && el !== document.documentElement) {
+      if (el.scrollWidth > el.clientWidth + 4) {
+        // Le test de largeur ne suffit pas : chez Embla, le conteneur intérieur
+        // annonce lui aussi 1118/8944 mais son overflow-x est "visible", donc
+        // son scrollLeft reste bloqué à 0. Seul le viewport défile vraiment.
+        const ox = window.getComputedStyle(el).overflowX;
+        if (ox === "auto" || ox === "scroll" || ox === "hidden") return el;
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function canScrollRow(el, dir) {
+    if (!el || !document.contains(el)) return false;
+    return dir < 0
+      ? el.scrollLeft > 0
+      : el.scrollLeft < el.scrollWidth - el.clientWidth - 1;
+  }
+
   function moveCursorTo(el) {
     const r = el.getBoundingClientRect();
     cx = r.left + r.width / 2;
@@ -360,6 +425,8 @@ body::after {
 
     if (dx === 0 && dy === 0) {
       speed = SPEED_MIN;
+      accX = accY = 0;
+      rowTarget = null;
       clearInterval(loopId);
       loopId = null;
       sendHover(); // survol final, pour les aperçus au repos
@@ -368,16 +435,31 @@ body::after {
 
     speed = Math.min(SPEED_MAX, speed * (1 + ACCEL * dt));
     const step = speed * dt;
+    const scrollStep = SCROLL_SPEED * dt;
     const vw = window.innerWidth  || 1280;
     const vh = window.innerHeight || 720;
 
     cx += dx * step;
     cy += dy * step;
 
-    // Contre le bord haut ou bas, le curseur ne sort pas : c'est la page qui
-    // défile. C'est ce qui rend tout le site atteignable à la télécommande.
-    if (dy < 0 && cy < EDGE)      { window.scrollBy(0, -step * SCROLL_MULT); cy = EDGE; }
-    if (dy > 0 && cy > vh - EDGE) { window.scrollBy(0,  step * SCROLL_MULT); cy = vh - EDGE; }
+    // Contre un bord, on fait défiler **tant qu'il reste du contenu**. Une fois
+    // en butée, le curseur est libre d'atteindre le bord de l'écran : sans ça
+    // la barre de navigation, à y=14..50, restait sous la zone morte de 70 px
+    // et donc définitivement incliquable.
+    if (dy < 0 && cy < EDGE && canScrollPage(-1))      { scrollPage(-scrollStep); cy = EDGE; }
+    if (dy > 0 && cy > vh - EDGE && canScrollPage(1))  { scrollPage(scrollStep);  cy = vh - EDGE; }
+
+    // Même principe à l'horizontale, sur la rangée de films sous le curseur.
+    if (dx !== 0 && (dx < 0 ? cx < EDGE : cx > vw - EDGE)) {
+      if (now - rowCheckedAt > ROW_RECHECK) {
+        rowCheckedAt = now;
+        rowTarget = findRowUnderCursor();
+      }
+      if (canScrollRow(rowTarget, dx)) {
+        scrollRow(rowTarget, dx * scrollStep);
+        cx = dx < 0 ? EDGE : vw - EDGE;
+      }
+    }
 
     if (cx < 0) cx = 0;
     if (cx > vw - 1) cx = vw - 1;
@@ -641,7 +723,7 @@ body::after {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 1000);
     registerKeys();
-    console.log("[Movix TizenBrew v4.0] curseur actif, page:", detectPage());
+    console.log("[Movix TizenBrew v4.1] curseur actif, page:", detectPage());
   }
 
   document.readyState === "loading"

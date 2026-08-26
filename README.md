@@ -11,8 +11,11 @@ sur Samsung Smart TV (Tizen), avec un curseur piloté à la télécommande.
 
 - **Curseur virtuel** déplacé aux flèches, OK pour cliquer — Movix est un site
   conçu pour la souris, le curseur atteint donc 100 % de la page
-- **Défilement par les bords** : pousser le curseur contre le haut ou le bas de
-  l'écran fait défiler la page
+- **Défilement par les bords** : pousser le curseur contre le haut ou le bas
+  fait défiler la page ; contre la gauche ou la droite, fait défiler la rangée
+  de films (les carrousels affichent 1118 px sur 8944 de contenu)
+- Une fois la page ou la rangée en butée, le curseur atteint le bord de l'écran,
+  ce qui rend la barre de navigation (à y=14) cliquable
 - Contrôle direct du lecteur vidéo (play/pause, ±10 s, stop, volume)
 - Touches couleurs comme raccourcis (🔴 Recherche, 🟢 Accueil, 🟡 À voir, 🔵 Favoris)
 - Blocage des pubs, popups, redirections et pièges à clic
@@ -35,6 +38,7 @@ navigation React vers `/movies`.
 |--------|--------------|-----------------|
 | ↑ ↓ ← → | Déplacent le curseur (accélère si maintenu) | ↑↓ volume, ←→ ∓10 s |
 | Curseur contre le bord ↑ ou ↓ | Fait défiler la page | — |
+| Curseur contre le bord ← ou → | Fait défiler la rangée de films | — |
 | OK | Clic à la position du curseur | Play / Pause |
 | Retour | Page précédente | Quitter le lecteur |
 | ⏯ ⏵ ⏸ | — | Play / Pause |
