@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.6
+ * Movix TizenBrew — inject.js v5.7
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -18,7 +18,8 @@
  *  - Le curseur          → jamais masqué, jamais estompé, jamais désactivé
  *  - OK                  → clic à la position du curseur
  *  - Retour              → page précédente, et ramène toujours sur Movix
- *  - Touches médias      → contrôlent la vidéo, toujours et partout
+ *  - Touches médias      → contrôlent la vidéo ; ▶ clique le bouton de lecture
+ *                          quand la <video> est hors de portée (lecteur iframe)
  *  - Plein écran         → touche bleue uniquement
  *  - Touches couleurs    → Recherche / Accueil / À voir
  *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
@@ -32,6 +33,16 @@
 
 (function () {
   "use strict";
+
+  // TizenBrew injecte ce script dans *chaque* contexte JavaScript créé, y
+  // compris celui des iframes. Sur une page de film, le lecteur est une iframe :
+  // le script s'y exécutait aussi et y dessinait un second curseur. On ne garde
+  // que la fenêtre principale.
+  try {
+    if (window.top !== window.self) return;
+  } catch (e) {
+    return; // accès refusé = on est dans une iframe d'un autre domaine
+  }
 
   // ── CSS embarqué (source : inject.css) ────────────────────────────────────
   const STYLE_ID = "movix-tizenbrew-style";
@@ -675,9 +686,30 @@ button, [role="button"] {
     return true;
   }
 
+  // Repli quand il n'y a pas de <video> à notre portée : on cherche le bouton
+  // de lecture dans la page et on le clique. C'est ce qui rend la touche ▶ de
+  // la télécommande utilisable là où une pub masquée intercepte le clic du
+  // curseur — la touche, elle, ne passe pas par la position à l'écran.
+  const PLAY_LABELS = ["regarder", "lecture", "lire", "play", "démarrer", "demarrer"];
+
+  function pressPlayButton() {
+    const candidats = document.querySelectorAll("button, [role='button'], a[href]");
+    for (const b of candidats) {
+      const texte = ((b.textContent || "") + " " +
+                     (b.getAttribute("aria-label") || "") + " " +
+                     (b.getAttribute("title") || "")).toLowerCase();
+      if (!PLAY_LABELS.some(l => texte.includes(l))) continue;
+      const r = b.getBoundingClientRect();
+      if (r.width < 10 || r.height < 10) continue;
+      b.click();
+      return true;
+    }
+    return false;
+  }
+
   function togglePlayPause() {
     const v = getVideo();
-    if (!v) return false;
+    if (!v) return pressPlayButton();
     if (v.paused) v.play();
     else          v.pause();
     return true;
@@ -699,7 +731,7 @@ button, [role="button"] {
       case KEY.PLAY: {
         const v = getVideo();
         if (v) { v.play(); return true; }
-        return false;
+        return pressPlayButton(); // même repli que ⏯
       }
 
       case KEY.PAUSE: {
@@ -919,7 +951,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v5.6] curseur actif");
+    console.log("[Movix TizenBrew v5.7] curseur actif");
   }
 
   document.readyState === "loading"

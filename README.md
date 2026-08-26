@@ -43,7 +43,7 @@ déplacent toujours le curseur, les touches médias pilotent toujours la vidéo.
 | Curseur collé au bord ← ou → | Fait défiler la rangée de films, par paliers |
 | OK | Clic à la position du curseur |
 | Retour | Page précédente — et **ramène toujours sur Movix** si une pub vous en a sorti |
-| ⏯ ⏵ ⏸ | Play / Pause |
+| ⏯ ⏵ ⏸ | Play / Pause — et à défaut de `<video>` accessible, **clique le bouton de lecture de la page**. Cest la voie sûre quand une pub masquée intercepte le clic du curseur. |
 | ⏩ ⏪ | +10 s / −10 s |
 | ⏹ | Stop (retour au début) |
 | 🔴 | Recherche |
