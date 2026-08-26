@@ -92,33 +92,56 @@ Autres points, sans réglage :
 1. Installer et ouvrir **TizenBrew** sur la Samsung TV.
 2. Ouvrir le **gestionnaire de modules**.
 3. Sélectionner **Ajouter un Module GitHub**.
-4. Entrer :
+4. Entrer **un tag de version**, pas `main` :
 
    ```
-   Bulbabulbe/tizen-movix@main
+   Bulbabulbe/tizen-movix@v4.0.1
    ```
 
-   Format générique si vous forkez : `VOTRE_USERNAME_GITHUB/NOM_DU_REPO@main`.
+   Format générique si vous forkez : `VOTRE_USERNAME_GITHUB/NOM_DU_REPO@vX.Y.Z`.
    Ne pas taper `gh/` devant : TizenBrew l'ajoute lui-même.
 
 5. Revenir au menu principal et lancer **Movix**.
 
-### Figer une version
+### Toujours utiliser un tag, jamais `@main`
 
-`@main` suit la branche : chaque `git push` change ce que la TV télécharge.
-Pour figer une version, remplacer `main` par un **commit SHA** (ou un tag) :
+jsDelivr, qui sert les fichiers à TizenBrew, ne traite pas les deux de la même
+façon. Vérifié sur les en-têtes de réponse :
 
+| Référence | `X-JSD-Version-Type` | Cache CDN |
+|---|---|---|
+| `@main` | `branch` | `s-maxage=43200` → jusqu'à **12 h de retard** |
+| `@v4.0.1` | `version` | `immutable`, récupéré à la demande |
+
+Avec `@main`, un `git push` peut mettre une demi-journée à atteindre la TV, et
+il n'y a aucun moyen fiable de forcer la mise à jour (l'endpoint
+`purge.jsdelivr.net` existe mais peut mettre longtemps à se propager).
+
+Un tag est servi immédiatement et ne changera jamais de contenu. Un commit SHA
+fonctionne aussi mais reste illisible sur une télécommande.
+
+**Ne jamais déplacer un tag déjà publié** : jsDelivr le met en cache un an en
+`immutable`, il continuerait à servir l'ancien contenu. Pour publier une
+correction, créer un nouveau tag :
+
+```bash
+git tag -a v4.0.2 -m "correction" && git push origin v4.0.2
 ```
-Bulbabulbe/tizen-movix@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0
-```
 
-Recommandé une fois que le module fonctionne, pour éviter qu'une mise à jour
-cassée ne se propage automatiquement sur la TV.
+puis saisir `Bulbabulbe/tizen-movix@v4.0.2` sur la TV.
 
-Les fichiers sont servis par jsDelivr. Vérification depuis un navigateur :
+### Et via npm ?
 
-- `https://cdn.jsdelivr.net/gh/Bulbabulbe/tizen-movix@main/package.json`
-- `https://cdn.jsdelivr.net/gh/Bulbabulbe/tizen-movix@main/inject.js`
+Aucun intérêt ici. Un module npm sans numéro de version subit le même cache de
+résolution, et avec un numéro il est traité exactement comme un tag Git — même
+type `version`, même `immutable`. En échange il faudrait un compte npm, un
+`npm publish` à chaque correction, et un paquet public de plus à maintenir.
+Un `git tag` fait la même chose en une commande.
+
+### Vérifier avant d'aller sur la TV
+
+- `https://cdn.jsdelivr.net/gh/Bulbabulbe/tizen-movix@v4.0.1/package.json`
+- `https://cdn.jsdelivr.net/gh/Bulbabulbe/tizen-movix@v4.0.1/inject.js`
 
 Les deux doivent renvoyer le contenu du fichier, pas une erreur 404.
 

@@ -1,6 +1,6 @@
 {
   "name": "movix-tizenbrew-fixed",
-  "version": "1.0.1",
+  "version": "4.0.1",
   "description": "Movix wrapper for Samsung Tizen TVs via TizenBrew",
   "keywords": ["tizenbrew", "tizen", "samsung", "movix"],
   "author": "Mathr81 (auteur original)",
