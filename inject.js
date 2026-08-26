@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v6.8
+ * Movix TizenBrew — inject.js v6.9
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -18,7 +18,8 @@
  *  - Souris USB          → prise en charge : le curseur natif redevient
  *                          visible dès qu'elle bouge, notre flèche s'efface.
  *                          Une flèche de la télécommande rebascule.
- *  - OK                  → clic à la position du curseur
+ *  - OK                  → clic à la position du curseur ; posé sur une
+ *                          <video> atteignable, la lance ou la met en pause
  *  - Retour              → page précédente, et ramène toujours sur Movix
  *  - Touches médias      → contrôlent la vidéo ; ▶ clique le bouton de lecture
  *                          quand la <video> est hors de portée (lecteur iframe)
@@ -490,6 +491,22 @@ button, [role="button"] {
     // pendant 25 s et le lecteur ne réagit pas davantage — la plupart des
     // lecteurs web attendent un clic sur leur bouton, pas une touche. On a donc
     // tout perdu et rien gagné. Annulé.
+
+    // OK sur la vidéo elle-même : on la lance ou on la met en pause
+    // directement, sans passer par un clic de synthèse.
+    //
+    // C'est ce qui fonctionnait avant la v5.1 — la version où les flèches
+    // réglaient le volume et l'avance — et que la suppression du mode lecteur
+    // avait fait disparaître. Contrairement à ce mode, rien n'est confisqué
+    // ici : les flèches restent au curseur, et ce raccourci ne s'applique que
+    // si le curseur est réellement posé sur la vidéo.
+    const v = getVideo();
+    if (v && (el === v || v.contains(el) || el.contains(v))) {
+      if (v.paused) v.play();
+      else          v.pause();
+      flashCursor();
+      return;
+    }
 
     const o = mouseEventInit();
 
@@ -1123,7 +1140,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v6.8] curseur actif");
+    console.log("[Movix TizenBrew v6.9] curseur actif");
   }
 
   document.readyState === "loading"
