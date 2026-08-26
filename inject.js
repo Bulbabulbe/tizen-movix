@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v6.3
+ * Movix TizenBrew — inject.js v6.4
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -126,7 +126,8 @@ button, [role="button"] {
   //  - pièges à clic       → overlays plein écran sans contenu utilisable,
   //                          sauf ceux posés sur le lecteur (ce sont eux qui
   //                          déclenchent la pub dont il a besoin)
-  //  - liens tiers cliqués → annulés, on ne quitte pas Movix par mégarde
+  //  - liens tiers cliqués → forcés dans le même onglet, jamais un nouveau :
+  //                          d'un nouvel onglet on ne peut pas revenir sur TV
   //
   // Ce qui n'est PAS bloqué, volontairement : window.open. Voir handleAdTab().
   // Réactivé : le blocage n'était pas la cause du Play inerte. La cause était
@@ -255,10 +256,17 @@ button, [role="button"] {
     if (!a) return;
     const href = a.getAttribute("href");
     if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return;
-    if (!sameSite(href) && !isAuthURL(href)) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
+    if (sameSite(href) || isAuthURL(href)) return;
+
+    // Un lien tiers en target="_blank" ouvre un onglet dont on ne peut plus
+    // sortir sur une TV : la touche Retour n'y fait rien et ce script ne s'y
+    // exécute pas. Le leurre de window.open ne couvre pas ce cas, puisqu'aucun
+    // window.open n'est appelé — c'est le navigateur qui ouvre l'onglet.
+    //
+    // On force donc le même onglet. Le lien fonctionne toujours, mais on
+    // atterrit dans un contexte où notre script tourne, et handleAdTab() nous
+    // ramène au film tout seul.
+    if (a.getAttribute("target")) a.removeAttribute("target");
   }
 
   function initAdBlock() {
@@ -1056,7 +1064,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v6.3] curseur actif");
+    console.log("[Movix TizenBrew v6.4] curseur actif");
   }
 
   document.readyState === "loading"
