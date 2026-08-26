@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.8
+ * Movix TizenBrew — inject.js v5.9
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -25,7 +25,8 @@
  *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
  *                          Les popups que TU déclenches passent : Movix
  *                          conditionne la lecture à un bouton publicitaire.
- *                          La fenêtre de pub se referme seule après 1,5 s.
+ *                          Chaque fenêtre de pub se referme seule après 1,5 s,
+ *                          et une pub qui emporte la page nous ramène au film.
  *  - Fluidité TV         → vidéos décoratives figées
  *
  * Note compatibilité : pas de `?.` ni de syntaxe ES2020+, les WebViews Tizen
@@ -188,6 +189,18 @@ button, [role="button"] {
 
     // Un overlay légitime de Movix contient quelque chose d'utilisable.
     if (el.querySelector("video, button, input, textarea, a[href^='/']")) return false;
+
+    // Un overlay posé sur le lecteur n'est pas forcément un voleur de clic :
+    // c'est souvent le déclencheur de pub dont le lecteur a besoin pour
+    // démarrer. Le supprimer rendait le bouton Play définitivement inerte.
+    const lecteur = getVideo() || biggestIframe();
+    if (lecteur) {
+      const lr = lecteur.getBoundingClientRect();
+      const chevauche = Math.max(0, Math.min(r.right, lr.right) - Math.max(r.left, lr.left)) *
+                        Math.max(0, Math.min(r.bottom, lr.bottom) - Math.max(r.top, lr.top));
+      if (chevauche > lr.width * lr.height * 0.5) return false;
+    }
+
     return el.textContent.trim().length < 5;
   }
 
@@ -217,18 +230,10 @@ button, [role="button"] {
     if (!adDirty) return;
     adDirty = false;
 
-    // Pub masquée posée par-dessus le lecteur : un lien vers un domaine tiers,
-    // étendu sur toute la surface du film, qui capte le clic destiné à Play et
-    // redirige. Le détecteur de pièges ci-dessous ne le voyait pas : il exige
-    // 60 % du viewport et un z-index ≥ 1000, or ce lien-là fait la taille du
-    // lecteur et n'a souvent aucun z-index déclaré.
-    for (const a of document.querySelectorAll("a[href]")) {
-      const href = a.getAttribute("href");
-      if (!href || sameSite(href) || isAuthURL(href)) continue;
-      const r = a.getBoundingClientRect();
-      if (r.width < 200 || r.height < 150) continue; // les liens du pied de page restent
-      a.remove();
-    }
+    // La suppression des grands liens tiers posés sur le lecteur, ajoutée en
+    // v5.6, a été retirée : c'est précisément cet élément qui déclenche
+    // l'ouverture de la pub, sans laquelle le lecteur ne démarre jamais. On le
+    // laisse faire son travail, la fenêtre qu'il ouvre est refermée aussitôt.
     const candidates = document.querySelectorAll("body > *, body > * > *");
     for (const el of candidates) {
       if (isClickTrap(el)) el.remove();
@@ -278,14 +283,18 @@ button, [role="button"] {
     // d'exactement une, pour son bouton « Voir une publicité ». Les suivantes
     // sont des pubs masquées : c'est l'une d'elles, posée sur le lecteur, qui a
     // détourné un appui sur Play vers un autre site.
-    let popupsUtilisees = 0;
     const realOpen = window.open;
     window.open = function (url) {
       // Connexion : on n'y touche pas, la fenêtre doit rester ouverte.
       if (url && isAuthURL(url)) return realOpen.apply(window, arguments);
 
-      if (Date.now() - lastUserClick < USER_CLICK_WINDOW && popupsUtilisees < 1) {
-        popupsUtilisees++;
+      // Toutes les popups issues d'un appui sont autorisées, sans limite de
+      // nombre. Les lecteurs embarqués (SwiftFlow et consorts) posent un
+      // élément transparent devant la vidéo : le clic déclenche le popunder,
+      // et le script ne lance la lecture *qu'après* l'ouverture réussie. Si
+      // window.open renvoie null, il abandonne — le bouton Play ne fait alors
+      // plus rien du tout. Il faut donc laisser ouvrir, puis refermer.
+      if (Date.now() - lastUserClick < USER_CLICK_WINDOW) {
         const w = realOpen.apply(window, arguments);
         if (w) {
           // On a ouvert cette fenêtre, donc on peut la refermer, même si elle
@@ -957,9 +966,29 @@ button, [role="button"] {
 
   let initialized = false;
 
+  // Certaines pubs ne passent pas par une popup mais emportent la page entière.
+  // TizenBrew injecte ce script sur la page publicitaire aussi : on y détecte
+  // qu'on n'est plus sur Movix et on revient tout seul, sans rien demander.
+  // Les domaines d'authentification sont exclus, sinon on couperait une
+  // connexion en cours.
+  const AD_RETURN_MS = 2500;
+
+  function autoRetourSiPub() {
+    if (onMovix() || isAuthURL(location.href)) return;
+    setTimeout(function () {
+      if (onMovix() || isAuthURL(location.href)) return;
+      const avant = location.href;
+      window.history.back();
+      setTimeout(function () {
+        if (location.href === avant) location.href = HOME;
+      }, BACK_FALLBACK_MS);
+    }, AD_RETURN_MS);
+  }
+
   function init() {
     if (initialized) return;
     initialized = true;
+    autoRetourSiPub();
     injectStyle();
     initAdBlock();
     ensureCursor();
@@ -968,7 +997,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v5.8] curseur actif");
+    console.log("[Movix TizenBrew v5.9] curseur actif");
   }
 
   document.readyState === "loading"

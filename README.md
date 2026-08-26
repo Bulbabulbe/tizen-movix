@@ -140,7 +140,6 @@ Activé par défaut. Pour tout désactiver, passer `ADBLOCK` à `false` en haut 
 | Popunders | `window.open()` renvoie `null` s'il n'y a pas eu d'appui sur OK dans la seconde précédente |
 | Redirections forcées des lecteurs embarqués | Les iframes tierces reçoivent un `sandbox` **sans** `allow-popups` ni `allow-top-navigation` |
 | Pixels de tracking | Les iframes minuscules greffées directement sur `<body>` sont supprimées |
-| Pub masquée sur le lecteur | Les liens vers un domaine tiers de plus de 200×150 px sont supprimés |
 | Pubs invisibles qui volent le clic OK | Les overlays plein écran, `z-index ≥ 1000`, sans contenu utilisable, sont supprimés |
 | Départ du site vers un domaine tiers | Les clics sur les liens externes sont annulés |
 
@@ -418,3 +417,29 @@ Notes utiles à qui reprendra ce module, chacune mesurée sur `movix.fun` :
   (0 → 288 → 288 px), tandis que `lenis.scrollTo()` ne déplace rien.
 - **Le lecteur ne démarre qu'après l'écran publicitaire**, monté dans
   `#movix-overlay-root` en `fixed inset-0 z-50`.
+
+## Le compromis publicitaire, expliqué
+
+Les lecteurs embarqués (SwiftFlow et similaires) posent **un élément
+transparent devant la vidéo**. Le clic dessus déclenche l'ouverture d'une page
+publicitaire, et le script ne lance la lecture **qu'après** cette ouverture.
+Si `window.open` renvoie `null`, il abandonne : le bouton Play ne fait alors
+plus rien du tout, et aucune erreur n'est affichée.
+
+C'est pourquoi bloquer ces fenêtres est contre-productif. La règle retenue :
+
+| Situation | Comportement |
+|---|---|
+| Fenêtre ouverte après un appui sur OK ou ▶ | **Autorisée**, puis refermée après 1,5 s |
+| Fenêtre ouverte sans appui récent (popunder) | Bloquée |
+| Fenêtre de connexion | Autorisée, jamais refermée |
+| Pub qui emporte la page entière | Retour automatique au film après 2,5 s |
+
+Trois réglages en haut de `inject.js` : `AD_POPUP_CLOSE_MS` (1500),
+`AD_RETURN_MS` (2500), `USER_CLICK_WINDOW` (1200).
+
+Deux protections ont été volontairement assouplies parce qu'elles rendaient le
+bouton Play inerte : la suppression des grands liens tiers posés sur le lecteur,
+et le détecteur de pièges à clic, qui ignore désormais tout overlay recouvrant
+plus de la moitié du lecteur. Ces éléments-là sont le déclencheur dont le
+lecteur a besoin.
