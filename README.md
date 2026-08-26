@@ -11,11 +11,11 @@ sur Samsung Smart TV (Tizen), avec un curseur piloté à la télécommande.
 
 - **Curseur virtuel** déplacé aux flèches, OK pour cliquer — Movix est un site
   conçu pour la souris, le curseur atteint donc 100 % de la page
-- **Défilement par les bords** : pousser le curseur contre le haut ou le bas
-  fait défiler la page ; contre la gauche ou la droite, fait défiler la rangée
-  de films (les carrousels affichent 1118 px sur 8944 de contenu)
-- Une fois la page ou la rangée en butée, le curseur atteint le bord de l'écran,
-  ce qui rend la barre de navigation (à y=14) cliquable
+- **Défilement par les bords** : le curseur doit être *collé* au bord de l'écran
+  pour que ça défile — en haut/bas la page, à gauche/droite la rangée de films
+  (les carrousels affichent 1118 px sur 8944 de contenu). Tant qu'il n'est pas
+  au bord, rien ne bouge : on peut donc s'arrêter sur la barre de navigation
+- **Sortir du champ de recherche** : haut, bas, ou Retour
 - Contrôle direct du lecteur vidéo (play/pause, ±10 s, stop, volume)
 - Touches couleurs comme raccourcis (🔴 Recherche, 🟢 Accueil, 🟡 À voir, 🔵 Favoris)
 - Blocage des pubs, popups, redirections et pièges à clic
@@ -47,7 +47,25 @@ navigation React vers `/movies`.
 | 🔴 🟢 🟡 🔵 | Recherche / Accueil / À voir / Favoris | — |
 
 Le curseur est masqué dans le lecteur : les flèches y pilotent la vidéo.
-Quand un champ de saisie a le focus, les flèches et OK sont rendus au champ.
+
+**Champ de recherche** : une fois le focus dans le champ, gauche/droite
+déplacent le curseur dans le texte et OK valide. Pour en ressortir et récupérer
+le curseur : **haut**, **bas**, ou **Retour**.
+
+### Connexion Google
+
+Google refuse l'authentification OAuth depuis une WebView embarquée et affiche
+« navigateur non sécurisé » (`disallowed_useragent`). C'est une politique de
+Google, pas un défaut du module, et aucun réglage de TizenBrew n'y change quoi
+que ce soit : ses trois User-Agents prédéfinis sont des agents Cobalt/Tizen,
+que Google rejette également.
+
+La seule voie fiable est de créer le compte Movix avec **e-mail + mot de passe**
+depuis un PC ou un téléphone, puis de se connecter ainsi sur la TV.
+
+Le module, lui, ne bloque pas ce parcours : les domaines d'authentification
+(`accounts.google.com`, `appleid.apple.com`, etc.) sont explicitement exclus du
+blocage des liens externes et des popups.
 
 ## Blocage des pubs
 

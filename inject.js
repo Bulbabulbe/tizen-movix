@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v4.1
+ * Movix TizenBrew — inject.js v4.2
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -13,9 +13,9 @@
  * haut ou le bas de l'écran.
  *
  *  - Flèches             → déplacent le curseur (accélère si on maintient)
- *  - Bord haut/bas       → fait défiler la page, tant qu'il reste du contenu ;
- *                          en butée le curseur atteint bien le bord de l'écran
+ *  - Bord haut/bas       → fait défiler, une fois le curseur collé au bord
  *  - Bord gauche/droite  → fait défiler la rangée de films sous le curseur
+ *  - Haut/bas ou Retour  → quittent le champ de recherche
  *  - OK                  → clic à la position du curseur
  *  - Retour              → page précédente
  *  - Dans le lecteur     → contrôle direct de la balise <video>, curseur masqué
@@ -197,6 +197,20 @@ body::after {
     }
   }
 
+  // Exception au blocage des domaines tiers : les parcours de connexion passent
+  // forcément par un fournisseur externe, et parfois par window.open. Les
+  // bloquer rendrait impossible toute connexion au compte Movix.
+  const AUTH_HOSTS = /(^|\.)(accounts\.google\.com|appleid\.apple\.com|login\.(microsoftonline|live)\.com|github\.com|.*\.auth0\.com|facebook\.com|discord\.com)$/i;
+
+  function isAuthURL(url) {
+    try {
+      const u = new URL(url, location.href);
+      return AUTH_HOSTS.test(u.hostname) || /(^|\/)(oauth|o\/oauth2|signin|sso|auth)(\/|$)/i.test(u.pathname);
+    } catch (e) {
+      return false;
+    }
+  }
+
   // Un clic vers un domaine tiers ne mène nulle part d'utile sur une TV.
   function onClickCapture(e) {
     const t = e.target;
@@ -204,7 +218,7 @@ body::after {
     if (!a) return;
     const href = a.getAttribute("href");
     if (!href || href.charAt(0) === "#" || href.indexOf("javascript:") === 0) return;
-    if (!sameSite(href)) {
+    if (!sameSite(href) && !isAuthURL(href)) {
       e.preventDefault();
       e.stopPropagation();
     }
@@ -213,7 +227,12 @@ body::after {
   function initAdBlock() {
     if (!ADBLOCK) return;
 
-    window.open = function () { return null; };
+    // Les popups de connexion restent autorisées, tout le reste est bloqué.
+    const realOpen = window.open;
+    window.open = function (url) {
+      if (url && isAuthURL(url)) return realOpen.apply(window, arguments);
+      return null;
+    };
     document.addEventListener("click", onClickCapture, true);
 
     // Ce callback se déclenche à chaque rendu React : il doit rester trivial.
@@ -278,7 +297,6 @@ body::after {
   const SPEED_MIN   = 520;   // départ lent, pour viser précisément
   const SPEED_MAX   = 2400;  // maintenu, on traverse l'écran en ~1 s
   const ACCEL       = 2.4;   // facteur d'accélération par seconde
-  const EDGE         = 70;    // à moins de 70 px du bord, ça défile
   const SCROLL_SPEED = 1100;  // px/s — volontairement indépendant de la vitesse
                               // du curseur : indexer le défilement sur une
                               // vitesse qui accélère jusqu'à 2400 px/s faisait
@@ -327,10 +345,34 @@ body::after {
     return { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
   }
 
+  // La page compte 257 éléments avec une transition CSS et des classes hover:.
+  // La v4.1 envoyait un mouseover toutes les 120 ms sans jamais envoyer le
+  // mouseout correspondant : les états de survol s'accumulaient sans jamais se
+  // libérer, et pendant un défilement chaque élément qui passait sous le
+  // curseur déclenchait une animation de plus. C'était ça, le tremblement.
+  let hoverEl = null;
+
   function sendHover() {
     const el = elementUnderCursor();
+    if (el === hoverEl) return; // rien de neuf : ne relance aucune transition
+
+    const previous = hoverEl;
+    hoverEl = el;
+
+    if (previous && document.contains(previous)) {
+      const out = mouseEventInit();
+      out.relatedTarget = el;
+      previous.dispatchEvent(new MouseEvent("mouseout", out));
+      const leave = mouseEventInit();
+      leave.bubbles = false;
+      leave.relatedTarget = el;
+      previous.dispatchEvent(new MouseEvent("mouseleave", leave));
+    }
+
     if (!el) return;
-    el.dispatchEvent(new MouseEvent("mouseover", mouseEventInit()));
+    const over = mouseEventInit();
+    over.relatedTarget = previous;
+    el.dispatchEvent(new MouseEvent("mouseover", over));
     el.dispatchEvent(new MouseEvent("mousemove", mouseEventInit()));
   }
 
@@ -442,32 +484,43 @@ body::after {
     cx += dx * step;
     cy += dy * step;
 
-    // Contre un bord, on fait défiler **tant qu'il reste du contenu**. Une fois
-    // en butée, le curseur est libre d'atteindre le bord de l'écran : sans ça
-    // la barre de navigation, à y=14..50, restait sous la zone morte de 70 px
-    // et donc définitivement incliquable.
-    if (dy < 0 && cy < EDGE && canScrollPage(-1))      { scrollPage(-scrollStep); cy = EDGE; }
-    if (dy > 0 && cy > vh - EDGE && canScrollPage(1))  { scrollPage(scrollStep);  cy = vh - EDGE; }
-
-    // Même principe à l'horizontale, sur la rangée de films sous le curseur.
-    if (dx !== 0 && (dx < 0 ? cx < EDGE : cx > vw - EDGE)) {
-      if (now - rowCheckedAt > ROW_RECHECK) {
-        rowCheckedAt = now;
-        rowTarget = findRowUnderCursor();
-      }
-      if (canScrollRow(rowTarget, dx)) {
-        scrollRow(rowTarget, dx * scrollStep);
-        cx = dx < 0 ? EDGE : vw - EDGE;
-      }
-    }
+    // Le défilement ne se déclenche que lorsque le curseur est *réellement*
+    // collé au bord de l'écran. Avec une marge de 70 px, tout ce qui se
+    // trouvait dans cette bande — la barre de navigation en premier — défilait
+    // sous le curseur sans qu'on puisse s'y arrêter pour cliquer.
+    const hitLeft   = cx <= 0;
+    const hitRight  = cx >= vw - 1;
+    const hitTop    = cy <= 0;
+    const hitBottom = cy >= vh - 1;
 
     if (cx < 0) cx = 0;
     if (cx > vw - 1) cx = vw - 1;
     if (cy < 0) cy = 0;
     if (cy > vh - 1) cy = vh - 1;
 
+    let scrolled = false;
+
+    if (dy < 0 && hitTop    && canScrollPage(-1)) { scrollPage(-scrollStep); scrolled = true; }
+    if (dy > 0 && hitBottom && canScrollPage(1))  { scrollPage(scrollStep);  scrolled = true; }
+
+    // Même principe à l'horizontale, sur la rangée de films sous le curseur.
+    if (dx !== 0 && (dx < 0 ? hitLeft : hitRight)) {
+      if (now - rowCheckedAt > ROW_RECHECK) {
+        rowCheckedAt = now;
+        rowTarget = findRowUnderCursor();
+      }
+      if (canScrollRow(rowTarget, dx)) {
+        scrollRow(rowTarget, dx * scrollStep);
+        scrolled = true;
+      }
+    }
+
     paintCursor();
-    if (now - lastHover > HOVER_MS) { lastHover = now; sendHover(); }
+
+    // Pas de survol pendant un défilement : le curseur ne bouge pas à l'écran,
+    // c'est le contenu qui glisse dessous, et relancer une transition par
+    // élément traversé n'apporte rien tout en chargeant le CPU de la TV.
+    if (!scrolled && now - lastHover > HOVER_MS) { lastHover = now; sendHover(); }
   }
 
   function startCursorLoop() {
@@ -499,6 +552,11 @@ body::after {
     if (!ae) return false;
     const tag = ae.tagName;
     return tag === "INPUT" || tag === "TEXTAREA" || ae.isContentEditable === true;
+  }
+
+  function leaveField() {
+    const ae = document.activeElement;
+    if (ae && ae.blur) ae.blur();
   }
 
   // ── Player : manipulation directe de la balise <video> ────────────────────
@@ -649,11 +707,15 @@ body::after {
     const now = Date.now();
 
     switch (kc) {
-      // Pendant une saisie, les flèches appartiennent au champ de texte.
+      // Gauche/droite déplacent le curseur dans le texte pendant une saisie.
       case KEY.LEFT:  if (typing) break; held.left  = now; startCursorLoop(); e.preventDefault(); break;
       case KEY.RIGHT: if (typing) break; held.right = now; startCursorLoop(); e.preventDefault(); break;
-      case KEY.UP:    if (typing) break; held.up    = now; startCursorLoop(); e.preventDefault(); break;
-      case KEY.DOWN:  if (typing) break; held.down  = now; startCursorLoop(); e.preventDefault(); break;
+
+      // Haut et bas quittent le champ. C'est la porte de sortie du clavier :
+      // sans elle, une fois le focus dans la recherche, plus aucune flèche ne
+      // revenait au curseur et il fallait tuer l'application.
+      case KEY.UP:    if (typing) leaveField(); held.up   = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.DOWN:  if (typing) leaveField(); held.down = now; startCursorLoop(); e.preventDefault(); break;
 
       case KEY.ENTER:
       case KEY.SPACE:
@@ -665,6 +727,8 @@ body::after {
 
       case KEY.BACK:
       case KEY.RETURN:
+        // Deuxième sortie du champ de saisie, la plus intuitive.
+        if (typing) { leaveField(); e.preventDefault(); break; }
         // Sans historique, on laisse passer : c'est ce qui permet de quitter le
         // module et de revenir au launcher TizenBrew.
         if (window.history.length > 1) {
@@ -723,7 +787,7 @@ body::after {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 1000);
     registerKeys();
-    console.log("[Movix TizenBrew v4.1] curseur actif, page:", detectPage());
+    console.log("[Movix TizenBrew v4.2] curseur actif, page:", detectPage());
   }
 
   document.readyState === "loading"
