@@ -394,7 +394,14 @@ appelle `window.open`. Bloquer ce parcours signifie **aucun film ne démarre**.
 Le compromis retenu : la popup passe si elle suit un appui sur OK dans la
 seconde **et qu'aucune autre n'a déjà été ouverte** depuis le chargement de la
 page. Movix en a besoin d'exactement une ; les suivantes sont des pubs
-masquées. Et si l'une passe quand même, Retour vous ramène.
+masquées.
+
+**Et cette fenêtre se referme toute seule au bout de 1,5 s** (`AD_POPUP_CLOSE_MS`).
+On l'a ouverte, donc on peut la refermer, même vers un autre domaine : Movix
+obtient son ouverture, et vous restez devant votre film sans avoir à chercher
+comment revenir. Les fenêtres de connexion, elles, ne sont jamais fermées.
+
+Si une redirection passe malgré tout, Retour vous ramène.
 
 ## Découvertes sur le site, vérifiées
 

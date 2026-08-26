@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.7
+ * Movix TizenBrew — inject.js v5.8
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -25,6 +25,7 @@
  *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
  *                          Les popups que TU déclenches passent : Movix
  *                          conditionne la lecture à un bouton publicitaire.
+ *                          La fenêtre de pub se referme seule après 1,5 s.
  *  - Fluidité TV         → vidéos décoratives figées
  *
  * Note compatibilité : pas de `?.` ni de syntaxe ES2020+, les WebViews Tizen
@@ -141,6 +142,11 @@ button, [role="button"] {
   // l'utilisateur d'un popunder ouvert en arrière-plan.
   let lastUserClick = 0;
   const USER_CLICK_WINDOW = 1200; // ms
+
+  // Délai avant fermeture automatique de la fenêtre publicitaire. Assez long
+  // pour qu'elle se charge réellement, assez court pour qu'on reste devant son
+  // film. Monter cette valeur si Movix refuse encore de lancer la lecture.
+  const AD_POPUP_CLOSE_MS = 1500;
 
   // Volontairement sans "allow-popups", "allow-top-navigation" ni
   // "allow-top-navigation-by-user-activation" : c'est là tout l'intérêt.
@@ -275,10 +281,21 @@ button, [role="button"] {
     let popupsUtilisees = 0;
     const realOpen = window.open;
     window.open = function (url) {
+      // Connexion : on n'y touche pas, la fenêtre doit rester ouverte.
       if (url && isAuthURL(url)) return realOpen.apply(window, arguments);
+
       if (Date.now() - lastUserClick < USER_CLICK_WINDOW && popupsUtilisees < 1) {
         popupsUtilisees++;
-        return realOpen.apply(window, arguments);
+        const w = realOpen.apply(window, arguments);
+        if (w) {
+          // On a ouvert cette fenêtre, donc on peut la refermer, même si elle
+          // pointe vers un autre domaine. Movix obtient son ouverture de page
+          // publicitaire, et l'utilisateur reste devant son film sans avoir à
+          // trouver comment revenir — ce qui, sur une TV, n'est pas évident.
+          try { window.focus(); } catch (e) {}
+          setTimeout(function () { try { w.close(); } catch (e) {} }, AD_POPUP_CLOSE_MS);
+        }
+        return w;
       }
       return null;
     };
@@ -951,7 +968,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v5.7] curseur actif");
+    console.log("[Movix TizenBrew v5.8] curseur actif");
   }
 
   document.readyState === "loading"
