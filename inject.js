@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v6.0
+ * Movix TizenBrew — inject.js v6.1
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -22,10 +22,8 @@
  *                          quand la <video> est hors de portée (lecteur iframe)
  *  - Plein écran         → touche bleue uniquement
  *  - Touches couleurs    → Recherche / Accueil / À voir
- *  - Anti-pub            → iframes tierces, pixels de tracking, pièges à clic.
- *                          window.open n'est PAS bloqué : les lecteurs ne
- *                          démarrent qu'après ouverture de leur pub. C'est
- *                          l'onglet publicitaire qui se referme lui-même.
+ *  - Anti-pub            → DÉSACTIVÉ en v6.1 (ADBLOCK = false), diagnostic.
+ *                          Seul reste actif : l'onglet de pub se referme seul.
  *  - Fluidité TV         → vidéos décoratives figées
  *
  * Note compatibilité : pas de `?.` ni de syntaxe ES2020+, les WebViews Tizen
@@ -129,7 +127,23 @@ button, [role="button"] {
   //  - liens tiers cliqués → annulés, on ne quitte pas Movix par mégarde
   //
   // Ce qui n'est PAS bloqué, volontairement : window.open. Voir handleAdTab().
-  const ADBLOCK = true;
+  // DÉSACTIVÉ EN v6.1 — volontairement, et à titre de diagnostic.
+  //
+  // La lecture ne démarre plus, et je n'ai pas réussi à déterminer si c'est ce
+  // blocage qui en est la cause ou autre chose. Plutôt que de continuer à
+  // deviner, tout est coupé : plus de sandbox sur les iframes, plus de
+  // suppression d'iframes, plus de balayage des pièges à clic, plus
+  // d'annulation des clics externes. Le site fonctionne exactement comme dans
+  // un navigateur ordinaire.
+  //
+  // Si un film se lance ainsi, le coupable est ici et on réactivera les
+  // protections une par une. S'il ne se lance toujours pas, le problème est
+  // ailleurs — dans le curseur ou dans les événements de clic — et il faudra
+  // chercher là.
+  //
+  // Le curseur, les touches et handleAdTab() restent actifs : l'onglet
+  // publicitaire continue de se refermer tout seul.
+  const ADBLOCK = false;
 
   // allow-popups est indispensable : le lecteur embarqué ouvre une page
   // publicitaire et ne lance la vidéo qu'ensuite. Sans ce droit, sa fenêtre
@@ -466,6 +480,21 @@ button, [role="button"] {
 
 
     const o = mouseEventInit();
+
+    // Les overlays publicitaires posés sur les lecteurs écoutent souvent
+    // pointerdown ou touchstart plutôt que click : n'envoyer que la séquence
+    // souris laissait leur déclencheur sans rien entendre. On émet donc les
+    // deux familles, dans l'ordre d'un vrai navigateur.
+    if (typeof window.PointerEvent === "function") {
+      const p = mouseEventInit();
+      p.pointerId = 1;
+      p.pointerType = "mouse";
+      p.isPrimary = true;
+      el.dispatchEvent(new PointerEvent("pointerover", p));
+      el.dispatchEvent(new PointerEvent("pointerdown", p));
+      el.dispatchEvent(new PointerEvent("pointerup", p));
+    }
+
     el.dispatchEvent(new MouseEvent("mouseover", o));
     el.dispatchEvent(new MouseEvent("mousedown", o));
     if (el.focus) el.focus();
@@ -986,7 +1015,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v6.0] curseur actif");
+    console.log("[Movix TizenBrew v6.1] curseur actif");
   }
 
   document.readyState === "loading"
