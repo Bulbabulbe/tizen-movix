@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v4.3
+ * Movix TizenBrew — inject.js v5.0
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -18,7 +18,7 @@
  *  - Haut/bas ou Retour  → quittent le champ de recherche
  *  - OK                  → clic à la position du curseur
  *  - Retour              → page précédente
- *  - Dans le lecteur     → contrôle direct de la balise <video>, curseur masqué
+ *  - Touches médias      → contrôlent la vidéo, toujours et partout
  *  - Touches couleurs    → raccourcis Recherche / Accueil / À voir / Favoris
  *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
  *                          Les popups que TU déclenches passent : Movix
@@ -53,6 +53,10 @@
   margin: -3px 0 0 -8px;
   pointer-events: none;
   z-index: 2147483647;
+  opacity: 1;
+  /* Fondu d'effacement après quelques secondes d'inactivité. Une transition
+     d'opacité seule reste une opération de composition, sans repaint. */
+  transition: opacity 0.25s linear;
   /* Pas de filter: drop-shadow ici. Un filtre se re-rastérise à chaque image,
      et sur une position fractionnaire il scintille — c'était l'origine du
      tremblement pendant les déplacements. Le contraste est obtenu par le
@@ -336,6 +340,17 @@ body::after {
   const ROW_RECHECK  = 200;   // ms entre deux recherches de rangée sous le curseur
   const KEY_TIMEOUT  = 260;   // sans nouvel appui, la touche est jugée relâchée
   const HOVER_MS     = 120;   // fréquence des mousemove de synthèse
+  const IDLE_HIDE_MS = 3000;  // effacement du curseur après ce délai sans appui
+
+  // Le défilement n'est appliqué qu'à 30 Hz, pas à chaque tick. Même vitesse
+  // moyenne, mais deux fois moins d'opérations de défilement, chacune deux fois
+  // plus grande. Sur le CPU d'une TV, soixante repaints par seconde était
+  // au-dessus des moyens du panneau : c'est ce qui donnait ce défilement
+  // heurté. Augmenter cette valeur (50, 66…) rend le défilement plus économe
+  // mais plus saccadé.
+  const SCROLL_INTERVAL = 33; // ms
+  let lastScrollAt = 0;
+  let lastActivity = 0;
 
   let cursorEl = null;
   let cx = 0, cy = 0;
@@ -360,14 +375,21 @@ body::after {
     paintCursor();
   }
 
+  let paintedX = null, paintedY = null;
+
   function paintCursor() {
     if (!cursorEl) return;
     // translate3d plutôt que top/left : aucun recalcul de mise en page, et une
     // couche GPU stable. Les coordonnées sont arrondies au pixel : les laisser
     // fractionnaires faisait vibrer la flèche, rerastérisée à chaque image sur
     // un décalage sous-pixel différent.
-    cursorEl.style.transform =
-      "translate3d(" + Math.round(cx) + "px," + Math.round(cy) + "px,0)";
+    const x = Math.round(cx), y = Math.round(cy);
+    // Rien à redessiner si le pixel n'a pas changé. Le cas est fréquent : le
+    // curseur reste immobile pendant tout un défilement de bord.
+    if (x === paintedX && y === paintedY) return;
+    paintedX = x;
+    paintedY = y;
+    cursorEl.style.transform = "translate3d(" + x + "px," + y + "px,0)";
   }
 
   // elementFromPoint renvoie le curseur lui-même s'il n'est pas transparent aux
@@ -437,18 +459,26 @@ body::after {
   // fractions et on ne défile que par pas entiers.
   let accY = 0, accX = 0;
 
-  function scrollPage(amount) {
+  function scrollDue(now) {
+    return now - lastScrollAt >= SCROLL_INTERVAL;
+  }
+
+  function scrollPage(amount, now) {
     accY += amount;
+    if (!scrollDue(now)) return;
     const whole = accY > 0 ? Math.floor(accY) : Math.ceil(accY);
     if (!whole) return;
+    lastScrollAt = now;
     accY -= whole;
     window.scrollBy(0, whole);
   }
 
-  function scrollRow(el, amount) {
+  function scrollRow(el, amount, now) {
     accX += amount;
+    if (!scrollDue(now)) return;
     const whole = accX > 0 ? Math.floor(accX) : Math.ceil(accX);
     if (!whole) return;
+    lastScrollAt = now;
     accX -= whole;
     el.scrollLeft += whole;
   }
@@ -538,8 +568,8 @@ body::after {
 
     let scrolled = false;
 
-    if (dy < 0 && hitTop    && canScrollPage(-1)) { scrollPage(-scrollStep); scrolled = true; }
-    if (dy > 0 && hitBottom && canScrollPage(1))  { scrollPage(scrollStep);  scrolled = true; }
+    if (dy < 0 && hitTop    && canScrollPage(-1)) { scrollPage(-scrollStep, now); scrolled = true; }
+    if (dy > 0 && hitBottom && canScrollPage(1))  { scrollPage(scrollStep, now);  scrolled = true; }
 
     // Même principe à l'horizontale, sur la rangée de films sous le curseur.
     if (dx !== 0 && (dx < 0 ? hitLeft : hitRight)) {
@@ -548,7 +578,7 @@ body::after {
         rowTarget = findRowUnderCursor();
       }
       if (canScrollRow(rowTarget, dx)) {
-        scrollRow(rowTarget, dx * scrollStep);
+        scrollRow(rowTarget, dx * scrollStep, now);
         scrolled = true;
       }
     }
@@ -603,18 +633,6 @@ body::after {
       if (area > bestArea) { bestArea = area; best = v; }
     }
     return best;
-  }
-
-  // On ne se fie plus à l'URL. detectPage() classait /movies en "detail" et
-  // /tv-shows en "home", et surtout il masquait le curseur sur toute page
-  // contenant "/watch" — y compris l'écran de choix des sources, où il faut
-  // justement pouvoir cliquer. Seul l'état réel de la vidéo fait foi :
-  // ça lit → les flèches pilotent la vidéo ; c'est en pause ou il n'y a rien
-  // → le curseur reprend la main. Un appui sur OK met en pause, donc rend le
-  // curseur, ce qui permet de changer de source en cours de lecture.
-  function isWatching() {
-    const v = getVideo();
-    return !!v && !v.paused;
   }
 
   function togglePlayPause() {
@@ -739,25 +757,25 @@ body::after {
   function onKeyDown(e) {
     const kc = e.keyCode;
 
-    // Pendant la lecture, les flèches pilotent la vidéo, pas le curseur.
-    if (isWatching()) {
-      if (handlePlayerKeys(kc)) {
-        e.preventDefault();
-        e.stopPropagation();
-        updateCursorVisibility(); // OK met en pause : le curseur doit revenir
-      }
-      return;
+    // Les touches médias pilotent la vidéo, toujours et partout. Elles sont
+    // dédiées à ça sur une télécommande Samsung et ne gênent jamais le curseur.
+    if ([KEY.PLAY_PAUSE, KEY.PLAY, KEY.PAUSE, KEY.FF, KEY.RW, KEY.STOP].includes(kc)) {
+      if (handlePlayerKeys(kc)) { e.preventDefault(); return; }
     }
 
-    // Les touches médias restent actives même à l'arrêt : elles ne servent
-    // qu'à la vidéo et ne gênent jamais le curseur.
-    if ([KEY.PLAY_PAUSE, KEY.PLAY, KEY.PAUSE, KEY.FF, KEY.RW, KEY.STOP].includes(kc)) {
-      if (handlePlayerKeys(kc)) {
-        e.preventDefault();
-        updateCursorVisibility();
-        return;
-      }
-    }
+    // Il n'existe plus de "mode lecteur" qui confisquerait les flèches.
+    //
+    // C'était la cause du blocage complet : dès qu'une vidéo était détectée,
+    // toutes les touches partaient au lecteur et le gestionnaire sortait
+    // immédiatement, curseur masqué. Si la vidéo se relançait toute seule ou si
+    // OK n'arrivait pas à la mettre en pause, plus rien ne répondait et il
+    // fallait tuer l'application.
+    //
+    // La règle appliquée est celle de la Magic Remote de LG, qui fait
+    // référence : une flèche ramène toujours le pointeur. Le curseur reste donc
+    // utilisable en permanence, y compris par-dessus une vidéo en lecture —
+    // ce qui permet de cliquer les commandes du lecteur de Movix. Pour avancer
+    // ou reculer, les touches ⏩ ⏪ ci-dessus.
 
     if ([KEY.RED, KEY.GREEN, KEY.YELLOW, KEY.BLUE].includes(kc)) {
       if (handleColorKeys(kc)) { e.preventDefault(); return; }
@@ -765,6 +783,11 @@ body::after {
 
     const typing = isTyping();
     const now = Date.now();
+
+    // Toute touche de navigation réveille le curseur s'il s'était effacé.
+    if ([KEY.LEFT, KEY.RIGHT, KEY.UP, KEY.DOWN, KEY.ENTER, KEY.SPACE].includes(kc)) {
+      showCursor();
+    }
 
     switch (kc) {
       // Gauche/droite déplacent le curseur dans le texte pendant une saisie.
@@ -812,13 +835,18 @@ body::after {
   // Un seul minuteur : React peut remplacer le <body>, et la page peut passer
   // dans le lecteur où le curseur n'a rien à faire.
 
-  function updateCursorVisibility() {
-    if (cursorEl) cursorEl.style.display = isWatching() ? "none" : "block";
+  // Le curseur s'efface tout seul après quelques secondes sans appui, pour ne
+  // pas rester planté au milieu d'un film. Il revient à la première flèche.
+  // C'est un simple fondu d'opacité : contrairement à display:none, ça ne peut
+  // pas laisser l'utilisateur sans pointeur, puisque rien n'est désactivé.
+  function showCursor() {
+    lastActivity = Date.now();
+    if (cursorEl) cursorEl.style.opacity = "1";
   }
 
   function housekeeping() {
     ensureCursor();
-    updateCursorVisibility();
+    if (cursorEl && Date.now() - lastActivity > IDLE_HIDE_MS) cursorEl.style.opacity = "0";
     freezeDecorVideos();
   }
 
@@ -851,7 +879,7 @@ body::after {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 1000);
     registerKeys();
-    console.log("[Movix TizenBrew v4.3] curseur actif");
+    console.log("[Movix TizenBrew v5.0] curseur actif");
   }
 
   document.readyState === "loading"

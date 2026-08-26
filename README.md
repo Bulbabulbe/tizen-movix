@@ -34,26 +34,41 @@ navigation React vers `/movies`.
 
 ## Raccourcis télécommande
 
-| Touche | Hors lecteur | Dans le lecteur |
-|--------|--------------|-----------------|
-| ↑ ↓ ← → | Déplacent le curseur (accélère si maintenu) | ↑↓ volume, ←→ ∓10 s |
-| Curseur contre le bord ↑ ou ↓ | Fait défiler la page | — |
-| Curseur contre le bord ← ou → | Fait défiler la rangée de films | — |
-| OK | Clic à la position du curseur | Play / Pause |
-| Retour | Page précédente | Quitter le lecteur |
-| ⏯ ⏵ ⏸ | — | Play / Pause |
-| ⏩ ⏪ | — | +10 s / −10 s |
-| ⏹ | — | Stop (retour au début) |
-| 🔴 🟢 🟡 🔵 | Recherche / Accueil / À voir / Favoris | — |
+Une seule règle, valable partout, y compris pendant un film : **les flèches
+déplacent toujours le curseur, les touches médias pilotent toujours la vidéo.**
 
-Le curseur n'est masqué **que pendant qu'une vidéo joue réellement** ; les
-flèches pilotent alors la lecture. Un appui sur OK met en pause et **rend
-aussitôt le curseur**, ce qui permet de changer de source ou de revenir en
-arrière en cours de film.
+| Touche | Effet |
+|--------|-------|
+| ↑ ↓ ← → | Déplacent le curseur (accélère si maintenu) |
+| Curseur collé au bord ↑ ou ↓ | Fait défiler la page |
+| Curseur collé au bord ← ou → | Fait défiler la rangée de films |
+| OK | Clic à la position du curseur |
+| Retour | Page précédente, ou sortie du champ de recherche |
+| ⏯ ⏵ ⏸ | Play / Pause |
+| ⏩ ⏪ | +10 s / −10 s |
+| ⏹ | Stop (retour au début) |
+| 🔴 🟢 🟡 🔵 | Recherche / Accueil / À voir / Favoris |
 
-La règle ne dépend plus de l'URL. Elle en dépendait jusqu'en v4.2, et comme la
-page de choix des sources est `/watch/movie/<id>`, le curseur y disparaissait
-alors qu'il n'y avait rien à lire et tout à cliquer.
+Le curseur s'efface après 3 secondes sans appui, pour ne pas rester planté au
+milieu d'un film, et revient à la première flèche. Il n'est jamais désactivé.
+
+### Il n'y a plus de « mode lecteur »
+
+C'était la cause des blocages complets. Jusqu'en v4.3, dès qu'une vidéo était
+détectée, toutes les touches partaient au lecteur et le gestionnaire sortait
+immédiatement, curseur masqué. Si la vidéo se relançait seule, ou si OK
+n'arrivait pas à la mettre en pause, plus rien ne répondait : il fallait tuer
+l'application.
+
+La règle appliquée est maintenant celle de la [Magic Remote de
+LG](https://webostv.developer.lge.com/develop/guides/magic-remote), qui fait
+référence sur le sujet : **une flèche ramène toujours le pointeur**. Aucun état
+du lecteur ne peut confisquer les flèches, et le curseur reste utilisable
+par-dessus une vidéo en lecture — ce qui permet justement de cliquer les
+commandes du lecteur de Movix.
+
+Pour avancer ou reculer dans un film, ce sont les touches ⏩ ⏪ de la
+télécommande, déclarées dans `keys`.
 
 **Champ de recherche** : une fois le focus dans le champ, gauche/droite
 déplacent le curseur dans le texte et OK valide. Pour en ressortir et récupérer
@@ -126,6 +141,11 @@ suffisent à saccader toute l'interface d'une TV. Le lecteur n'est jamais touch�
 
 Autres points, sans réglage :
 
+- Le défilement n'est appliqué qu'à **30 Hz** (`SCROLL_INTERVAL`), pas à chaque
+  tick : même vitesse moyenne, deux fois moins d'opérations, chacune deux fois
+  plus grande. Soixante repaints par seconde dépassaient les moyens du panneau.
+- Le curseur n'est redessiné que si sa position **au pixel près** a changé — il
+  reste immobile pendant tout un défilement de bord.
 - La boucle du curseur utilise `setInterval` et non `requestAnimationFrame` :
   rAF est suspendu dès que la WebView ne se juge pas visible, et un curseur figé
   rendrait la télécommande inutilisable. Les déplacements sont calculés en

@@ -1,4 +1,4 @@
-/* Movix TizenBrew — inject.css v4 */
+/* Movix TizenBrew — inject.css v5 */
 /* Source de reference. A l execution, c est la copie embarquee dans */
 /* inject.js qui est injectee : TizenBrew ne charge que le fichier "main". */
 
@@ -20,6 +20,10 @@
   margin: -3px 0 0 -8px;
   pointer-events: none;
   z-index: 2147483647;
+  opacity: 1;
+  /* Fondu d'effacement après quelques secondes d'inactivité. Une transition
+     d'opacité seule reste une opération de composition, sans repaint. */
+  transition: opacity 0.25s linear;
   /* Pas de filter: drop-shadow ici. Un filtre se re-rastérise à chaque image,
      et sur une position fractionnaire il scintille — c'était l'origine du
      tremblement pendant les déplacements. Le contraste est obtenu par le
