@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.5
+ * Movix TizenBrew — inject.js v5.6
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -199,6 +199,19 @@ button, [role="button"] {
     // Pièges à clic : ils sont réinjectés en boucle, d'où le balayage répété.
     if (!adDirty) return;
     adDirty = false;
+
+    // Pub masquée posée par-dessus le lecteur : un lien vers un domaine tiers,
+    // étendu sur toute la surface du film, qui capte le clic destiné à Play et
+    // redirige. Le détecteur de pièges ci-dessous ne le voyait pas : il exige
+    // 60 % du viewport et un z-index ≥ 1000, or ce lien-là fait la taille du
+    // lecteur et n'a souvent aucun z-index déclaré.
+    for (const a of document.querySelectorAll("a[href]")) {
+      const href = a.getAttribute("href");
+      if (!href || sameSite(href) || isAuthURL(href)) continue;
+      const r = a.getBoundingClientRect();
+      if (r.width < 200 || r.height < 150) continue; // les liens du pied de page restent
+      a.remove();
+    }
     const candidates = document.querySelectorAll("body > *, body > * > *");
     for (const el of candidates) {
       if (isClickTrap(el)) el.remove();
@@ -244,10 +257,18 @@ button, [role="button"] {
     // pouvait démarrer. Les popunders, eux, partent d'un minuteur ou d'un
     // événement de fond, sans activation utilisateur récente : ils restent
     // bloqués.
+    // Une seule popup autorisée par chargement de page. Movix en a besoin
+    // d'exactement une, pour son bouton « Voir une publicité ». Les suivantes
+    // sont des pubs masquées : c'est l'une d'elles, posée sur le lecteur, qui a
+    // détourné un appui sur Play vers un autre site.
+    let popupsUtilisees = 0;
     const realOpen = window.open;
     window.open = function (url) {
-      if (Date.now() - lastUserClick < USER_CLICK_WINDOW) return realOpen.apply(window, arguments);
       if (url && isAuthURL(url)) return realOpen.apply(window, arguments);
+      if (Date.now() - lastUserClick < USER_CLICK_WINDOW && popupsUtilisees < 1) {
+        popupsUtilisees++;
+        return realOpen.apply(window, arguments);
+      }
       return null;
     };
     document.addEventListener("click", onClickCapture, true);
@@ -898,7 +919,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v5.5] curseur actif");
+    console.log("[Movix TizenBrew v5.6] curseur actif");
   }
 
   document.readyState === "loading"

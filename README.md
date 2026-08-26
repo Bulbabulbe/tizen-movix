@@ -140,6 +140,7 @@ Activé par défaut. Pour tout désactiver, passer `ADBLOCK` à `false` en haut 
 | Popunders | `window.open()` renvoie `null` s'il n'y a pas eu d'appui sur OK dans la seconde précédente |
 | Redirections forcées des lecteurs embarqués | Les iframes tierces reçoivent un `sandbox` **sans** `allow-popups` ni `allow-top-navigation` |
 | Pixels de tracking | Les iframes minuscules greffées directement sur `<body>` sont supprimées |
+| Pub masquée sur le lecteur | Les liens vers un domaine tiers de plus de 200×150 px sont supprimés |
 | Pubs invisibles qui volent le clic OK | Les overlays plein écran, `z-index ≥ 1000`, sans contenu utilisable, sont supprimés |
 | Départ du site vers un domaine tiers | Les clics sur les liens externes sont annulés |
 
@@ -391,8 +392,9 @@ qui permet de quitter le module et de revenir au launcher TizenBrew.
 Parce que Movix conditionne la lecture à un bouton « Voir une publicité » qui
 appelle `window.open`. Bloquer ce parcours signifie **aucun film ne démarre**.
 Le compromis retenu : la popup passe si elle suit un appui sur OK dans la
-seconde, sinon elle est bloquée — et si elle vous emmène ailleurs, Retour vous
-ramène.
+seconde **et qu'aucune autre n'a déjà été ouverte** depuis le chargement de la
+page. Movix en a besoin d'exactement une ; les suivantes sont des pubs
+masquées. Et si l'une passe quand même, Retour vous ramène.
 
 ## Découvertes sur le site, vérifiées
 
