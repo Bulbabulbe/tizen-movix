@@ -15,9 +15,8 @@ sur Samsung Smart TV (Tizen), avec un curseur piloté à la télécommande.
   pour que ça défile — en haut/bas la page, à gauche/droite la rangée de films
   (les carrousels affichent 1118 px sur 8944 de contenu). Tant qu'il n'est pas
   au bord, rien ne bouge : on peut donc s'arrêter sur la barre de navigation
-- **Sortir du champ de recherche** : haut, bas, ou Retour
 - Contrôle direct du lecteur vidéo (play/pause, ±10 s, stop, volume)
-- Touches couleurs comme raccourcis (🔴 Recherche, 🟢 Accueil, 🟡 À voir, 🔵 Favoris)
+- Touches couleurs (🔴 Recherche, 🟢 Accueil, 🟡 À voir, 🔵 Plein écran)
 - Blocage des pubs, popups, redirections et pièges à clic
 - Adaptation TV (vidéos décoratives figées, scrollbar et curseur natif masqués)
 
@@ -29,7 +28,7 @@ approximatif sur les grilles de cartes, et tout reposait sur une liste de
 sélecteurs CSS qui casse dès que Movix change ses classes.
 
 Le curseur ne dépend d'aucun sélecteur. Mesuré sur `movix.fun` : traversée de
-l'écran en 0,85 s, et un clic synthétique sur « Films » déclenche bien la
+l'écran en 1,17 s, et un clic synthétique sur « Films » déclenche bien la
 navigation React vers `/movies`.
 
 ## Raccourcis télécommande
@@ -40,9 +39,9 @@ déplacent toujours le curseur, les touches médias pilotent toujours la vidéo.
 | Touche | Effet |
 |--------|-------|
 | ↑ ↓ ← → | Déplacent le curseur (accélère si maintenu) |
-| Curseur collé au bord ↑ ou ↓ | Fait défiler la page |
-| Curseur collé au bord ← ou → | Fait défiler la rangée de films |
-| OK | Clic à la position du curseur — **sur le film, bascule le plein écran** |
+| Curseur collé au bord ↑ ou ↓ | Fait défiler la page, par paliers |
+| Curseur collé au bord ← ou → | Fait défiler la rangée de films, par paliers |
+| OK | Clic à la position du curseur |
 | Retour | Page précédente, ou sortie du champ de recherche |
 | ⏯ ⏵ ⏸ | Play / Pause |
 | ⏩ ⏪ | +10 s / −10 s |
@@ -50,25 +49,26 @@ déplacent toujours le curseur, les touches médias pilotent toujours la vidéo.
 | 🔴 | Recherche |
 | 🟢 | Accueil |
 | 🟡 | À voir |
-| 🔵 | Plein écran (raccourci, voir ci-dessous) |
+| 🔵 | Plein écran (voir ci-dessous) |
 
-### Plein écran : trois façons, la première suffit
+### Plein écran : la touche 🔵 bleue, et rien d'autre
 
-1. **Amener le curseur sur le film et appuyer sur OK.** C'est tout. Un second
-   OK au même endroit ressort du plein écran.
-2. Le bouton **⛶** en bas à droite, qui apparaît dès qu'un lecteur est présent.
-3. La touche 🔵 bleue.
+Sur une Samsung One Remote, il n'y a pas de touches couleurs physiques :
+appuyer **trois fois** sur le bouton « 123 / points colorés » (réglages rapides,
+puis pavé numérique, puis fenêtre des couleurs) fait apparaître le bleu.
 
-Pourquoi OK sur le film ? Parce que c'est le seul geste utile à cet endroit :
-quand le lecteur est une iframe d'un autre domaine, un clic de synthèse n'entre
-pas dans son document et ne ferait donc strictement rien. Et parce que sur une
-Samsung One Remote, atteindre la touche bleue demande **trois appuis** sur le
-bouton « 123 / points colorés » (une fois pour les réglages rapides, deux fois
-pour le pavé numérique, trois fois pour les touches couleurs) — inutilisable au
-quotidien.
+Deux raccourcis plus commodes ont été essayés puis retirés, parce qu'ils
+volaient le clic destiné au lecteur :
 
-Pourquoi fabriquer ce bouton plutôt qu'utiliser celui du lecteur ? Deux raisons
-vérifiées :
+- un bouton ⛶ en bas à droite, qui recouvrait les commandes du lecteur ;
+- OK sur le film, qui interceptait l'appui destiné au bouton Play.
+
+Un clic sur le lecteur doit rester un clic sur le lecteur. Le plein écran est
+une action rare, elle peut coûter trois appuis ; démarrer un film est l'action
+principale et ne doit jamais être détournée.
+
+Pourquoi ne pas simplement utiliser le bouton plein écran du lecteur ? Deux
+raisons vérifiées :
 
 1. **Movix n'en a pas.** Son bundle JavaScript de 304 ko ne contient aucune
    occurrence de `requestFullscreen`, `exitFullscreen` ni `fullscreenElement`.
@@ -78,10 +78,10 @@ vérifiées :
    pas dans le document embarqué. Aucun curseur injecté depuis la page parente
    ne peut cliquer les boutons d'un lecteur tiers.
 
-Le bouton, lui, appartient à notre document, donc le curseur l'atteint. Il
-appelle `requestFullscreen()` sur la vidéo, ou sur l'iframe qui la contient —
-ce qui, depuis la page parente, fonctionne même en cross-origin. `allowfullscreen`
-est ajouté aux iframes au passage, sans quoi l'appel serait refusé.
+La touche bleue, elle, appelle `requestFullscreen()` depuis notre document, sur
+la vidéo ou sur l'iframe qui la contient — ce qui fonctionne même en
+cross-origin depuis la page parente. `allowfullscreen` est ajouté aux iframes au
+passage, sans quoi l'appel serait refusé.
 
 **Le curseur n'est jamais masqué, jamais estompé, jamais désactivé.** Chaque
 tentative d'être malin là-dessus — le masquer pendant la lecture, l'effacer
@@ -182,6 +182,12 @@ suffisent à saccader toute l'interface d'une TV. Le lecteur n'est jamais touch�
 
 Autres points, sans réglage :
 
+- **Le défilement se fait par paliers**, plus en continu : arrivé contre un
+  bord, chaque palier est un saut net de 40 % de l'écran, puis plus rien
+  jusqu'au suivant (260 ms). Mesuré : **4 sauts par seconde au lieu de 30
+  repaints**, pour une vitesse effective de ~1150 px/s. Réglages en haut de
+  `inject.js` : `SCROLL_STEP_RATIO` (hauteur du saut) et `SCROLL_STEP_MS`
+  (cadence).
 - **Le pas du curseur est plafonné à 26 px** (`MAX_STEP`). C'est le correctif le
   plus important : le pas vaut vitesse × temps écoulé, donc quand la TV
   n'arrivait pas à suivre, les ticks se décalaient et le curseur se téléportait.
@@ -190,9 +196,6 @@ Autres points, sans réglage :
   était la vraie source du tremblement pendant le défilement. Plafonné, un
   ralentissement de la TV ralentit le curseur au lieu de le faire sauter
   (26 px, 16 px de dépassement). La traversée d'écran passe de 0,85 s à 1,17 s.
-- Le défilement n'est appliqué qu'à **30 Hz** (`SCROLL_INTERVAL`), pas à chaque
-  tick : même vitesse moyenne, deux fois moins d'opérations, chacune deux fois
-  plus grande. Soixante repaints par seconde dépassaient les moyens du panneau.
 - Le curseur n'est redessiné que si sa position **au pixel près** a changé — il
   reste immobile pendant tout un défilement de bord.
 - La boucle du curseur utilise `setInterval` et non `requestAnimationFrame` :
@@ -352,3 +355,16 @@ blocage de pubs et le curseur se font entièrement localement, dans le DOM.
 HTTP est gérée toute seule, TizenBrew réinjecte le script sur la page d'arrivée
 quel que soit le domaine. Ce n'est qu'en cas de disparition du domaine sans
 redirection qu'il faut modifier `websiteURL` dans `package.json`.
+
+## Cookies et session
+
+Le module ne touche à rien : aucun `document.cookie`, aucun `localStorage`,
+aucun `sessionStorage` dans le code (l'audit le vérifie).
+
+TizenBrew non plus : son code source ne contient aucune purge de cookies, de
+cache ni de stockage. Il n'utilise `localStorage` que pour son propre réglage
+de User-Agent.
+
+Votre session Movix persiste donc comme dans un navigateur ordinaire, aussi
+longtemps que le cookie de Movix reste valide et que la TV ne vide pas les
+données du navigateur.

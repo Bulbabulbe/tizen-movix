@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.3
+ * Movix TizenBrew — inject.js v5.4
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -13,13 +13,13 @@
  * haut ou le bas de l'écran.
  *
  *  - Flèches             → déplacent le curseur (accélère si on maintient)
- *  - Bord haut/bas       → fait défiler, une fois le curseur collé au bord
+ *  - Bord haut/bas       → défile par paliers, curseur collé au bord
  *  - Bord gauche/droite  → fait défiler la rangée de films sous le curseur
  *  - Le curseur          → jamais masqué, jamais estompé, jamais désactivé
  *  - OK                  → clic à la position du curseur
  *  - Retour              → page précédente
  *  - Touches médias      → contrôlent la vidéo, toujours et partout
- *  - Plein écran         → OK sur le film (ou bouton ⛶, ou touche bleue)
+ *  - Plein écran         → touche bleue uniquement
  *  - Touches couleurs    → Recherche / Accueil / À voir
  *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
  *                          Les popups que TU déclenches passent : Movix
@@ -90,33 +90,6 @@ button, [role="button"] {
   min-width: 44px !important;
 }
 
-/* ── Bouton plein écran ──
-   Movix n'en fournit pas : son bundle ne contient aucune API fullscreen. Et
-   quand le lecteur est une iframe tierce, nos clics de synthèse ne peuvent pas
-   atteindre ses commandes — un clic dispatché sur l'élément <iframe> n'entre
-   pas dans le document embarqué. On fournit donc notre propre bouton, dans
-   notre document, que le curseur peut réellement cliquer.
-   Il n'apparaît que là où il sert : sur une page qui contient un lecteur. */
-#movix-tz-fs {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  width: 60px;
-  height: 60px;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  font: 26px/1 Arial, sans-serif;
-  color: #fff;
-  background: rgba(0,0,0,0.72);
-  border: 2px solid rgba(255,255,255,0.5);
-  border-radius: 10px;
-  z-index: 2147483647;
-  cursor: none;
-}
-
-#movix-tz-fs.tz-on { display: flex; }
-
 /* Le bandeau de raccourcis en bas à droite, hérité du projet d'origine, a été
    supprimé : il restait affiché en permanence, y compris par-dessus un film. */
 `;
@@ -185,7 +158,7 @@ button, [role="button"] {
 
   // Overlay plein écran, au-dessus de tout, sans contenu utile = piège à clic.
   function isClickTrap(el) {
-    if (el.id === CURSOR_ID || el.id === FS_ID) return false; // nos propres éléments
+    if (el.id === CURSOR_ID) return false; // notre curseur
     const s = window.getComputedStyle(el);
     if (s.position !== "fixed" && s.position !== "absolute") return false;
     if (s.pointerEvents === "none") return false;
@@ -355,21 +328,10 @@ button, [role="button"] {
   // ralentit le curseur au lieu de le faire sauter.
   const MAX_STEP    = 26;
   const MAX_DT      = 0.033; // s — au-delà, on considère que la TV a décroché
-  const SCROLL_SPEED = 1100;  // px/s — volontairement indépendant de la vitesse
-                              // du curseur : indexer le défilement sur une
-                              // vitesse qui accélère jusqu'à 2400 px/s faisait
-                              // s'emballer la page.
   const ROW_RECHECK  = 200;   // ms entre deux recherches de rangée sous le curseur
   const KEY_TIMEOUT  = 260;   // sans nouvel appui, la touche est jugée relâchée
   const HOVER_MS     = 120;   // fréquence des mousemove de synthèse
 
-  // Le défilement n'est appliqué qu'à 30 Hz, pas à chaque tick. Même vitesse
-  // moyenne, mais deux fois moins d'opérations de défilement, chacune deux fois
-  // plus grande. Sur le CPU d'une TV, soixante repaints par seconde était
-  // au-dessus des moyens du panneau : c'est ce qui donnait ce défilement
-  // heurté. Augmenter cette valeur (50, 66…) rend le défilement plus économe
-  // mais plus saccadé.
-  const SCROLL_INTERVAL = 33; // ms
   let lastScrollAt = 0;
 
   let cursorEl = null;
@@ -460,16 +422,6 @@ button, [role="button"] {
     if (!el) return;
     lastUserClick = Date.now(); // autorise la popup que ce clic pourrait ouvrir
 
-    // OK sur le lecteur lui-même = plein écran. C'est le seul geste utile à cet
-    // endroit : quand le lecteur est une iframe d'un autre domaine, un clic de
-    // synthèse n'entre pas dans son document et ne ferait donc rien du tout.
-    // Ça évite d'imposer la touche bleue, qui demande trois appuis sur le
-    // bouton « 123 » d'une Samsung One Remote pour être seulement accessible.
-    if (el.tagName === "VIDEO" || (el.tagName === "IFRAME" && el === biggestIframe())) {
-      toggleFullscreen();
-      flashCursor();
-      return;
-    }
 
     const o = mouseEventInit();
     el.dispatchEvent(new MouseEvent("mouseover", o));
@@ -493,30 +445,32 @@ button, [role="button"] {
   // Toujours en pixels entiers. Envoyer des valeurs sous-pixel à scrollBy
   // soixante fois par seconde faisait trembler la page ; on accumule les
   // fractions et on ne défile que par pas entiers.
-  let accY = 0, accX = 0;
 
-  function scrollDue(now) {
-    return now - lastScrollAt >= SCROLL_INTERVAL;
+  // Défilement par paliers, plus en continu.
+  //
+  // C'est le « mode scroll » : arrivé contre un bord, chaque palier est un saut
+  // net, puis plus rien jusqu'au suivant. Le défilement continu obligeait la TV
+  // à redessiner la page sans interruption pendant tout un maintien de flèche —
+  // trente fois par seconde même après optimisation — et c'est ce qui restait
+  // saccadé. Un palier, c'est deux ou trois images à dessiner au lieu de trente.
+  //
+  // SCROLL_STEP_RATIO : hauteur d'un palier, en fraction d'écran.
+  // SCROLL_STEP_MS    : cadence des paliers tant que la flèche est maintenue.
+  // Augmenter le premier saute plus loin, augmenter le second ralentit.
+  const SCROLL_STEP_RATIO = 0.4;
+  const SCROLL_STEP_MS    = 260;
+
+  function scrollPageStep(dir, now) {
+    if (now - lastScrollAt < SCROLL_STEP_MS) return;
+    lastScrollAt = now;
+    const h = window.innerHeight || 720;
+    window.scrollBy(0, dir * Math.round(h * SCROLL_STEP_RATIO));
   }
 
-  function scrollPage(amount, now) {
-    accY += amount;
-    if (!scrollDue(now)) return;
-    const whole = accY > 0 ? Math.floor(accY) : Math.ceil(accY);
-    if (!whole) return;
+  function scrollRowStep(el, dir, now) {
+    if (now - lastScrollAt < SCROLL_STEP_MS) return;
     lastScrollAt = now;
-    accY -= whole;
-    window.scrollBy(0, whole);
-  }
-
-  function scrollRow(el, amount, now) {
-    accX += amount;
-    if (!scrollDue(now)) return;
-    const whole = accX > 0 ? Math.floor(accX) : Math.ceil(accX);
-    if (!whole) return;
-    lastScrollAt = now;
-    accX -= whole;
-    el.scrollLeft += whole;
+    el.scrollLeft += dir * Math.round((el.clientWidth || 600) * SCROLL_STEP_RATIO);
   }
 
   function canScrollPage(dir) {
@@ -571,7 +525,6 @@ button, [role="button"] {
 
     if (dx === 0 && dy === 0) {
       speed = SPEED_MIN;
-      accX = accY = 0;
       rowTarget = null;
       clearInterval(loopId);
       loopId = null;
@@ -581,7 +534,6 @@ button, [role="button"] {
 
     speed = Math.min(SPEED_MAX, speed * (1 + ACCEL * dt));
     const step = Math.min(MAX_STEP, speed * dt);
-    const scrollStep = SCROLL_SPEED * dt;
     const vw = window.innerWidth  || 1280;
     const vh = window.innerHeight || 720;
 
@@ -604,8 +556,8 @@ button, [role="button"] {
 
     let scrolled = false;
 
-    if (dy < 0 && hitTop    && canScrollPage(-1)) { scrollPage(-scrollStep, now); scrolled = true; }
-    if (dy > 0 && hitBottom && canScrollPage(1))  { scrollPage(scrollStep, now);  scrolled = true; }
+    if (dy < 0 && hitTop    && canScrollPage(-1)) { scrollPageStep(-1, now); scrolled = true; }
+    if (dy > 0 && hitBottom && canScrollPage(1))  { scrollPageStep(1, now);  scrolled = true; }
 
     // Même principe à l'horizontale, sur la rangée de films sous le curseur.
     if (dx !== 0 && (dx < 0 ? hitLeft : hitRight)) {
@@ -614,7 +566,7 @@ button, [role="button"] {
         rowTarget = findRowUnderCursor();
       }
       if (canScrollRow(rowTarget, dx)) {
-        scrollRow(rowTarget, dx * scrollStep, now);
+        scrollRowStep(rowTarget, dx, now);
         scrolled = true;
       }
     }
@@ -880,34 +832,8 @@ button, [role="button"] {
   // tierce, notre écouteur de touches ne reçoit plus rien du tout. Le lecteur
   // embarqué se met alors à interpréter les flèches lui-même — il monte le son
   // ou avance dans le film — pendant que le curseur paraît mort.
-  const FS_ID = "movix-tz-fs";
-  let fsButton = null;
-
-  function ensureFsButton() {
-    if (fsButton && document.contains(fsButton)) return;
-    fsButton = document.getElementById(FS_ID);
-    if (fsButton) return;
-    fsButton = document.createElement("div");
-    fsButton.id = FS_ID;
-    fsButton.textContent = "⛶";
-    fsButton.title = "Plein écran";
-    // Un vrai clic de la télécommande passe par clickUnderCursor, qui dispatche
-    // un MouseEvent : un écouteur "click" ordinaire suffit donc.
-    fsButton.addEventListener("click", toggleFullscreen);
-    document.body.appendChild(fsButton);
-  }
-
-  // Le bouton ne s'affiche que si la page contient réellement un lecteur.
-  function updateFsButton() {
-    if (!fsButton) return;
-    const present = !!(getVideo() || biggestIframe());
-    fsButton.classList.toggle("tz-on", present);
-  }
-
   function housekeeping() {
     ensureCursor();
-    ensureFsButton();
-    updateFsButton();
     const ae = document.activeElement;
     if (ae && ae.tagName === "IFRAME") ae.blur();
     freezeDecorVideos();
@@ -942,7 +868,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 1000);
     registerKeys();
-    console.log("[Movix TizenBrew v5.3] curseur actif");
+    console.log("[Movix TizenBrew v5.4] curseur actif");
   }
 
   document.readyState === "loading"

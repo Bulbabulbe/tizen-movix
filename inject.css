@@ -56,32 +56,5 @@ button, [role="button"] {
   min-width: 44px !important;
 }
 
-/* ── Bouton plein écran ──
-   Movix n'en fournit pas : son bundle ne contient aucune API fullscreen. Et
-   quand le lecteur est une iframe tierce, nos clics de synthèse ne peuvent pas
-   atteindre ses commandes — un clic dispatché sur l'élément <iframe> n'entre
-   pas dans le document embarqué. On fournit donc notre propre bouton, dans
-   notre document, que le curseur peut réellement cliquer.
-   Il n'apparaît que là où il sert : sur une page qui contient un lecteur. */
-#movix-tz-fs {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  width: 60px;
-  height: 60px;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  font: 26px/1 Arial, sans-serif;
-  color: #fff;
-  background: rgba(0,0,0,0.72);
-  border: 2px solid rgba(255,255,255,0.5);
-  border-radius: 10px;
-  z-index: 2147483647;
-  cursor: none;
-}
-
-#movix-tz-fs.tz-on { display: flex; }
-
 /* Le bandeau de raccourcis en bas à droite, hérité du projet d'origine, a été
    supprimé : il restait affiché en permanence, y compris par-dessus un film. */
