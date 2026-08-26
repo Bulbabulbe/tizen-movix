@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v6.7
+ * Movix TizenBrew — inject.js v6.8
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -15,7 +15,9 @@
  *  - Flèches             → déplacent le curseur (accélère si on maintient)
  *  - Bord haut/bas       → défile par paliers, curseur collé au bord
  *  - Bord gauche/droite  → fait défiler la rangée de films sous le curseur
- *  - Le curseur          → jamais masqué, jamais estompé, jamais désactivé
+ *  - Souris USB          → prise en charge : le curseur natif redevient
+ *                          visible dès qu'elle bouge, notre flèche s'efface.
+ *                          Une flèche de la télécommande rebascule.
  *  - OK                  → clic à la position du curseur
  *  - Retour              → page précédente, et ramène toujours sur Movix
  *  - Touches médias      → contrôlent la vidéo ; ▶ clique le bouton de lecture
@@ -48,8 +50,13 @@
   // ── CSS embarqué (source : inject.css) ────────────────────────────────────
   const STYLE_ID = "movix-tizenbrew-style";
   const CSS = `
-/* Pas de curseur souris natif : on dessine le nôtre */
-* { cursor: none !important; }
+/* Le curseur natif n'est masqué QUE tant qu'aucune vraie souris n'a bougé.
+   Sinon une souris USB branchée sur la TV est invisible, donc inutilisable —
+   alors qu'elle est le seul moyen de cliquer dans un lecteur embarqué. */
+html.tz-virtual-cursor * { cursor: none !important; }
+
+/* Notre flèche disparaît dès qu'une vraie souris prend le relais */
+html:not(.tz-virtual-cursor) #movix-tz-cursor { display: none !important; }
 
 /* Scrollbars inutiles */
 ::-webkit-scrollbar { display: none; }
@@ -908,10 +915,12 @@ button, [role="button"] {
     // touches avant la page ; rendre les flèches au champ ne servait donc à
     // rien et privait l'utilisateur du curseur en pleine connexion.
     switch (kc) {
-      case KEY.LEFT:  held.left  = now; startCursorLoop(); e.preventDefault(); break;
-      case KEY.RIGHT: held.right = now; startCursorLoop(); e.preventDefault(); break;
-      case KEY.UP:    held.up    = now; startCursorLoop(); e.preventDefault(); break;
-      case KEY.DOWN:  held.down  = now; startCursorLoop(); e.preventDefault(); break;
+      // Une flèche rebascule sur le curseur virtuel si une souris avait pris
+      // le relais : les deux modes s'échangent sans réglage à toucher.
+      case KEY.LEFT:  useVirtualCursor(true); held.left = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.RIGHT: useVirtualCursor(true); held.right = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.UP:    useVirtualCursor(true); held.up    = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.DOWN:  useVirtualCursor(true); held.down  = now; startCursorLoop(); e.preventDefault(); break;
 
       case KEY.ENTER:
       case KEY.SPACE:
@@ -965,6 +974,26 @@ button, [role="button"] {
   // revenir vite. 25 s donnaient une impression de gel complet.
   const IFRAME_FOCUS_MS = 3000;
   let iframeFocusedAt = 0;
+
+  // Bascule souris réelle / curseur virtuel.
+  //
+  // Une vraie souris produit des événements isTrusted, contrairement aux nôtres.
+  // Dès qu'elle bouge, on rend le curseur natif et on efface le nôtre ; une
+  // flèche de la télécommande rebascule dans l'autre sens. Les deux coexistent
+  // sans se gêner.
+  //
+  // C'est important : une souris USB est le seul moyen de cliquer à l'intérieur
+  // d'un lecteur embarqué, un clic synthétique ne franchissant pas la frontière
+  // d'une iframe d'un autre domaine.
+  function useVirtualCursor(on) {
+    const c = document.documentElement.classList;
+    if (on) c.add("tz-virtual-cursor");
+    else c.remove("tz-virtual-cursor");
+  }
+
+  function onRealMouseMove(e) {
+    if (e && e.isTrusted) useVirtualCursor(false);
+  }
 
   function housekeeping() {
     ensureCursor();
@@ -1088,11 +1117,13 @@ button, [role="button"] {
     initAdBlock();
     ensureCursor();
     document.addEventListener("play", onPlayCapture, true);
+    useVirtualCursor(true);
+    document.addEventListener("mousemove", onRealMouseMove, true);
     document.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v6.7] curseur actif");
+    console.log("[Movix TizenBrew v6.8] curseur actif");
   }
 
   document.readyState === "loading"

@@ -2,8 +2,13 @@
 /* Source de reference. A l execution, c est la copie embarquee dans */
 /* inject.js qui est injectee : TizenBrew ne charge que le fichier "main". */
 
-/* Pas de curseur souris natif : on dessine le nôtre */
-* { cursor: none !important; }
+/* Le curseur natif n'est masqué QUE tant qu'aucune vraie souris n'a bougé.
+   Sinon une souris USB branchée sur la TV est invisible, donc inutilisable —
+   alors qu'elle est le seul moyen de cliquer dans un lecteur embarqué. */
+html.tz-virtual-cursor * { cursor: none !important; }
+
+/* Notre flèche disparaît dès qu'une vraie souris prend le relais */
+html:not(.tz-virtual-cursor) #movix-tz-cursor { display: none !important; }
 
 /* Scrollbars inutiles */
 ::-webkit-scrollbar { display: none; }
