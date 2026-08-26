@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.1
+ * Movix TizenBrew — inject.js v5.2
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -19,7 +19,8 @@
  *  - OK                  → clic à la position du curseur
  *  - Retour              → page précédente
  *  - Touches médias      → contrôlent la vidéo, toujours et partout
- *  - Touches couleurs    → Recherche / Accueil / À voir / PLEIN ÉCRAN (bleue)
+ *  - Plein écran         → bouton ⛶ cliquable en bas à droite (ou touche bleue)
+ *  - Touches couleurs    → Recherche / Accueil / À voir
  *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
  *                          Les popups que TU déclenches passent : Movix
  *                          conditionne la lecture à un bouton publicitaire.
@@ -89,6 +90,33 @@ button, [role="button"] {
   min-width: 44px !important;
 }
 
+/* ── Bouton plein écran ──
+   Movix n'en fournit pas : son bundle ne contient aucune API fullscreen. Et
+   quand le lecteur est une iframe tierce, nos clics de synthèse ne peuvent pas
+   atteindre ses commandes — un clic dispatché sur l'élément <iframe> n'entre
+   pas dans le document embarqué. On fournit donc notre propre bouton, dans
+   notre document, que le curseur peut réellement cliquer.
+   Il n'apparaît que là où il sert : sur une page qui contient un lecteur. */
+#movix-tz-fs {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 60px;
+  height: 60px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font: 26px/1 Arial, sans-serif;
+  color: #fff;
+  background: rgba(0,0,0,0.72);
+  border: 2px solid rgba(255,255,255,0.5);
+  border-radius: 10px;
+  z-index: 2147483647;
+  cursor: none;
+}
+
+#movix-tz-fs.tz-on { display: flex; }
+
 /* Le bandeau de raccourcis en bas à droite, hérité du projet d'origine, a été
    supprimé : il restait affiché en permanence, y compris par-dessus un film. */
 `;
@@ -149,12 +177,15 @@ button, [role="button"] {
     const src = f.getAttribute("src");
     if (!src || sameSite(src)) return; // lecteur maison : on n'y touche pas
     f.setAttribute("sandbox", IFRAME_SANDBOX);
+    // Sans cet attribut, requestFullscreen() sur l'iframe est refusé — et c'est
+    // notre seul moyen de passer un lecteur embarqué en plein écran.
+    f.setAttribute("allowfullscreen", "");
     f.setAttribute("src", src);        // recharge sous sandbox
   }
 
   // Overlay plein écran, au-dessus de tout, sans contenu utile = piège à clic.
   function isClickTrap(el) {
-    if (el.id === CURSOR_ID) return false;
+    if (el.id === CURSOR_ID || el.id === FS_ID) return false; // nos propres éléments
     const s = window.getComputedStyle(el);
     if (s.position !== "fixed" && s.position !== "absolute") return false;
     if (s.pointerEvents === "none") return false;
@@ -833,8 +864,34 @@ button, [role="button"] {
   // tierce, notre écouteur de touches ne reçoit plus rien du tout. Le lecteur
   // embarqué se met alors à interpréter les flèches lui-même — il monte le son
   // ou avance dans le film — pendant que le curseur paraît mort.
+  const FS_ID = "movix-tz-fs";
+  let fsButton = null;
+
+  function ensureFsButton() {
+    if (fsButton && document.contains(fsButton)) return;
+    fsButton = document.getElementById(FS_ID);
+    if (fsButton) return;
+    fsButton = document.createElement("div");
+    fsButton.id = FS_ID;
+    fsButton.textContent = "⛶";
+    fsButton.title = "Plein écran";
+    // Un vrai clic de la télécommande passe par clickUnderCursor, qui dispatche
+    // un MouseEvent : un écouteur "click" ordinaire suffit donc.
+    fsButton.addEventListener("click", toggleFullscreen);
+    document.body.appendChild(fsButton);
+  }
+
+  // Le bouton ne s'affiche que si la page contient réellement un lecteur.
+  function updateFsButton() {
+    if (!fsButton) return;
+    const present = !!(getVideo() || biggestIframe());
+    fsButton.classList.toggle("tz-on", present);
+  }
+
   function housekeeping() {
     ensureCursor();
+    ensureFsButton();
+    updateFsButton();
     const ae = document.activeElement;
     if (ae && ae.tagName === "IFRAME") ae.blur();
     freezeDecorVideos();
@@ -869,7 +926,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 1000);
     registerKeys();
-    console.log("[Movix TizenBrew v5.1] curseur actif");
+    console.log("[Movix TizenBrew v5.2] curseur actif");
   }
 
   document.readyState === "loading"

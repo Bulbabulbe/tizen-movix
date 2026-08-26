@@ -50,12 +50,29 @@ déplacent toujours le curseur, les touches médias pilotent toujours la vidéo.
 | 🔴 | Recherche |
 | 🟢 | Accueil |
 | 🟡 | À voir |
-| 🔵 | **Plein écran** (bascule) |
+| 🔵 | Plein écran (raccourci, voir ci-dessous) |
 
-Le lecteur de Movix n'offre pas de bouton plein écran utilisable à la
-télécommande, et ses commandes restent donc affichées par-dessus le film. La
-touche 🔵 bascule le plein écran sur la vidéo, ou sur l'iframe qui la contient
-quand le lecteur est embarqué.
+### Plein écran : un bouton à cliquer
+
+Un bouton **⛶** apparaît en bas à droite dès qu'un lecteur est présent sur la
+page. Il se clique au curseur, comme n'importe quel bouton. La touche 🔵 fait la
+même chose, pour qui préfère un raccourci.
+
+Pourquoi fabriquer ce bouton plutôt qu'utiliser celui du lecteur ? Deux raisons
+vérifiées :
+
+1. **Movix n'en a pas.** Son bundle JavaScript de 304 ko ne contient aucune
+   occurrence de `requestFullscreen`, `exitFullscreen` ni `fullscreenElement`.
+2. **Les commandes d'un lecteur embarqué sont hors d'atteinte du curseur.**
+   Quand le lecteur est une iframe d'un autre domaine, `elementFromPoint`
+   renvoie l'élément `<iframe>`, pas son contenu : un clic de synthèse n'entre
+   pas dans le document embarqué. Aucun curseur injecté depuis la page parente
+   ne peut cliquer les boutons d'un lecteur tiers.
+
+Le bouton, lui, appartient à notre document, donc le curseur l'atteint. Il
+appelle `requestFullscreen()` sur la vidéo, ou sur l'iframe qui la contient —
+ce qui, depuis la page parente, fonctionne même en cross-origin. `allowfullscreen`
+est ajouté aux iframes au passage, sans quoi l'appel serait refusé.
 
 **Le curseur n'est jamais masqué, jamais estompé, jamais désactivé.** Chaque
 tentative d'être malin là-dessus — le masquer pendant la lecture, l'effacer
