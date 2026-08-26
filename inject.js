@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v6.2
+ * Movix TizenBrew — inject.js v6.3
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -22,9 +22,10 @@
  *                          quand la <video> est hors de portée (lecteur iframe)
  *  - Plein écran         → touche bleue uniquement
  *  - Touches couleurs    → Recherche / Accueil / À voir
- *  - Anti-pub            → DÉSACTIVÉ (ADBLOCK = false), diagnostic en cours.
- *  - Onglet de pub       → le focus revient sur le film, l'onglet se referme
- *                          au bout de 10 s. Actif même si ADBLOCK est false.
+ *  - Anti-pub            → réactivé. window.open renvoie un LEURRE (technique
+ *                          du scriptlet uBlock « window.open-defuser ») : le
+ *                          script de pub reçoit un vrai objet Window, ses
+ *                          vérifications passent, aucun onglet ne s'ouvre.
  *  - Fluidité TV         → vidéos décoratives figées
  *
  * Note compatibilité : pas de `?.` ni de syntaxe ES2020+, les WebViews Tizen
@@ -128,31 +129,22 @@ button, [role="button"] {
   //  - liens tiers cliqués → annulés, on ne quitte pas Movix par mégarde
   //
   // Ce qui n'est PAS bloqué, volontairement : window.open. Voir handleAdTab().
-  // DÉSACTIVÉ EN v6.1 — volontairement, et à titre de diagnostic.
-  //
-  // La lecture ne démarre plus, et je n'ai pas réussi à déterminer si c'est ce
-  // blocage qui en est la cause ou autre chose. Plutôt que de continuer à
-  // deviner, tout est coupé : plus de sandbox sur les iframes, plus de
-  // suppression d'iframes, plus de balayage des pièges à clic, plus
-  // d'annulation des clics externes. Le site fonctionne exactement comme dans
-  // un navigateur ordinaire.
-  //
-  // Si un film se lance ainsi, le coupable est ici et on réactivera les
-  // protections une par une. S'il ne se lance toujours pas, le problème est
-  // ailleurs — dans le curseur ou dans les événements de clic — et il faudra
-  // chercher là.
-  //
-  // Le curseur, les touches et handleAdTab() restent actifs : l'onglet
-  // publicitaire continue de se refermer tout seul.
-  const ADBLOCK = false;
+  // Réactivé : le blocage n'était pas la cause du Play inerte. La cause était
+  // window.open renvoyant null, désormais remplacé par un leurre (voir
+  // defuseWindowOpen), qui est actif indépendamment de ce réglage.
+  const ADBLOCK = true;
 
-  // allow-popups est indispensable : le lecteur embarqué ouvre une page
-  // publicitaire et ne lance la vidéo qu'ensuite. Sans ce droit, sa fenêtre
-  // est refusée par le bac à sable et le bouton Play reste inerte.
+  // Sans "allow-popups" ni "allow-top-navigation", volontairement.
   //
-  // allow-top-navigation reste volontairement absent, et c'est là toute la
-  // protection : le lecteur peut ouvrir un onglet, jamais remplacer le nôtre.
-  const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-presentation allow-popups";
+  // Le leurre de window.open ne protège que la fenêtre principale : le code
+  // d'une iframe tierce a son propre window.open, hors de notre portée. Sans
+  // ce bac à sable, un lecteur embarqué pourrait donc ouvrir un vrai onglet et
+  // piéger l'utilisateur — situation dont on ne peut plus sortir sur une TV.
+  //
+  // Le compromis est assumé : un lecteur qui exige d'ouvrir sa pub restera
+  // peut-être muet, mais on ne se retrouvera jamais bloqué. Essayer un autre
+  // lecteur dans la liste des sources coûte moins cher que redémarrer l'app.
+  const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-presentation";
 
   function sameSite(url) {
     try {
@@ -223,6 +215,7 @@ button, [role="button"] {
       // un 1×1 sans src, enfant direct de body). Un lecteur vidéo embarqué vit
       // à l'intérieur de la mise en page et peut mesurer 0×0 le temps de se
       // charger — le supprimer sur sa taille serait fatal à la lecture.
+      if (f.getAttribute("data-tz-decoy")) continue; // notre leurre de window.open
       if (tiny && f.parentElement === document.body) { f.remove(); continue; }
       hardenIframe(f);
     }
@@ -1004,10 +997,9 @@ button, [role="button"] {
     }, AD_RETURN_MS);
   }
 
-  // Délai avant de refermer l'onglet publicitaire resté en arrière-plan.
-  // Généreux : le lecteur vérifie parfois que sa fenêtre est toujours ouverte
-  // avant de lancer la vidéo. Trop court, la lecture ne démarre pas.
-  const AD_TAB_CLOSE_MS = 10000;
+  // Durée de vie du leurre. Le lecteur vérifie parfois sa fenêtre plusieurs
+  // secondes après l'avoir ouverte : on la garde disponible largement au-delà.
+  const DECOY_LIFETIME_MS = 30000;
 
   // On n'empêche rien et on ne renvoie rien de faux : la fenêtre est réellement
   // ouverte, le lecteur peut la vérifier, la lecture démarre. On se contente de
@@ -1021,18 +1013,33 @@ button, [role="button"] {
   //
   // Actif même quand ADBLOCK vaut false : ce n'est pas du blocage, c'est ce qui
   // évite de rester coincé.
-  function keepFocusOnMovix() {
+  // Leurre de fenêtre, repris de la technique de uBlock Origin
+  // (scriptlet « window.open-defuser », alias « nowoif ») : on renvoie le
+  // contentWindow d'une iframe cachée. C'est un véritable objet Window, donc
+  // toutes les vérifications du script publicitaire passent — w non nul,
+  // w.document accessible, w.focus() et w.close() existants — et le lecteur
+  // enchaîne sur la lecture. Mais aucun onglet ne s'ouvre.
+  //
+  // C'est la seule issue viable ici. Renvoyer null rendait Play inerte, et
+  // laisser l'onglet s'ouvrir piège l'utilisateur : la touche Retour n'y fait
+  // rien, ce script ne s'y exécute pas, et une TV n'a pas de barre d'onglets.
+  function decoyWindow() {
+    const f = document.createElement("iframe");
+    f.setAttribute("data-tz-decoy", "1");
+    f.setAttribute("aria-hidden", "true");
+    f.style.cssText = "position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;border:0";
+    (document.body || document.documentElement).appendChild(f);
+    // Assez long pour couvrir les vérifications différées du lecteur.
+    setTimeout(function () { try { f.remove(); } catch (e) {} }, DECOY_LIFETIME_MS);
+    return f.contentWindow;
+  }
+
+  function defuseWindowOpen() {
     const realOpen = window.open;
     window.open = function (url) {
-      const w = realOpen.apply(window, arguments);
-      if (!w || (url && isAuthURL(url))) return w;
-
-      const revenir = function () { try { window.focus(); } catch (e) {} };
-      revenir();
-      setTimeout(revenir, 300);
-      setTimeout(revenir, 1200);
-      setTimeout(function () { try { w.close(); } catch (e) {} }, AD_TAB_CLOSE_MS);
-      return w;
+      // La connexion doit vraiment s'ouvrir, elle.
+      if (url && isAuthURL(url)) return realOpen.apply(window, arguments);
+      return decoyWindow();
     };
   }
 
@@ -1040,7 +1047,7 @@ button, [role="button"] {
     if (initialized) return;
     initialized = true;
     handleAdTab();
-    keepFocusOnMovix();
+    defuseWindowOpen();
     injectStyle();
     initAdBlock();
     ensureCursor();
@@ -1049,7 +1056,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v6.2] curseur actif");
+    console.log("[Movix TizenBrew v6.3] curseur actif");
   }
 
   document.readyState === "loading"

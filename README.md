@@ -418,41 +418,35 @@ Notes utiles à qui reprendra ce module, chacune mesurée sur `movix.fun` :
 - **Le lecteur ne démarre qu'après l'écran publicitaire**, monté dans
   `#movix-overlay-root` en `fixed inset-0 z-50`.
 
-## La publicité : traitée à l'arrivée, jamais au départ
+## La publicité : un leurre de fenêtre
 
-Les lecteurs embarqués (SwiftFlow et similaires) posent un élément transparent
-devant la vidéo. Le clic dessus ouvre une page publicitaire, et le script ne
-lance la lecture **qu'après** cette ouverture. Toute interférence côté ouvreur
-le fait abandonner en silence : le bouton Play devient inerte, sans message.
+Les lecteurs embarqués posent un élément transparent devant la vidéo. Le clic
+ouvre une page publicitaire, et le script ne lance la lecture **qu'après** —
+en vérifiant que la fenêtre s'est bien ouverte.
 
-Trois tentatives ont échoué pour cette raison, et sont documentées ici pour
-qu'on ne les refasse pas :
+Deux impasses, constatées sur la TV :
 
-| Tentative | Résultat |
+| Approche | Résultat |
 |---|---|
-| `window.open` renvoie `null` | Play inerte |
-| Une seule popup autorisée par page | Play inerte à partir du lecteur |
-| Fermer la fenêtre depuis l'ouvreur | Play inerte |
+| `window.open` renvoie `null` | Le script abandonne, Play reste inerte, sans message |
+| Laisser l'onglet s'ouvrir | **L'utilisateur est piégé** : Retour ne fait rien, ce script ne s'exécute pas dans le nouvel onglet, et une TV n'a pas de barre d'onglets |
 
-**`window.open` n'est donc plus touché du tout.** Le lecteur voit un navigateur
-ordinaire. La publicité est traitée à l'arrivée : TizenBrew injecte ce script
-dans chaque contexte, y compris l'onglet publicitaire, où `handleAdTab()` agit
-après 2,5 s (`AD_RETURN_MS`) :
+La sortie est la technique du scriptlet **`window.open-defuser`** de uBlock
+Origin (alias `nowoif`) : renvoyer un **leurre**, le `contentWindow` d'une
+iframe cachée hors écran. C'est un véritable objet `Window` — `w` non nul,
+`w.document` accessible, `w.closed === false`, `focus()`, `blur()`, `close()`
+présents — donc toutes les vérifications passent et le lecteur enchaîne. Mais
+aucun onglet ne s'ouvre.
 
-- onglet ouvert par une autre fenêtre → **il se referme lui-même**, et la page
-  du film redevient visible. Une fenêtre ouverte par script a le droit de
-  s'auto-fermer, y compris vers un autre domaine ;
-- page arrivée sans ouvreur, donc une redirection ayant remplacé le film →
-  retour en arrière, et à défaut retour à l'accueil.
+Le leurre vit 30 s (`DECOY_LIFETIME_MS`), le temps des vérifications différées,
+puis disparaît. Les fenêtres d'authentification, elles, s'ouvrent réellement.
 
-Les domaines d'authentification sont exclus : une fenêtre de connexion n'est
-jamais fermée.
+### Pourquoi le bac à sable des iframes n'a pas `allow-popups`
 
-### Le bac à sable des iframes
+Le leurre ne protège que la fenêtre principale : le code d'une iframe tierce a
+son propre `window.open`, hors de notre portée. Avec `allow-popups`, un lecteur
+embarqué pourrait ouvrir un vrai onglet et piéger l'utilisateur.
 
-`allow-popups` **doit** figurer dans le `sandbox` appliqué aux iframes tierces,
-sans quoi le lecteur embarqué ne peut pas ouvrir sa publicité et ne démarre
-jamais. C'était la cause d'un blocage tenace.
-
-`allow-top-navigation` reste volontairement absent, et c'est là toute la
-protection : le lecteur peut ouvrir un onglet, jamais remplacer le nôtre.
+Le compromis est assumé : un lecteur qui exige d'ouvrir sa publicité restera
+peut-être muet, mais **on ne se retrouvera jamais bloqué**. Essayer une autre
+source dans la liste coûte moins cher que redémarrer l'application.
