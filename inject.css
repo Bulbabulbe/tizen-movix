@@ -20,15 +20,16 @@
   margin: -3px 0 0 -8px;
   pointer-events: none;
   z-index: 2147483647;
-  will-change: transform;
-  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M5 2l14 9-6.2 1.4 3.4 6.4-3 1.6-3.4-6.5L5 19z' fill='%23ffffff' stroke='%23000000' stroke-width='1.6' stroke-linejoin='round'/></svg>") no-repeat center / contain;
-  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.6));
+  /* Pas de filter: drop-shadow ici. Un filtre se re-rastérise à chaque image,
+     et sur une position fractionnaire il scintille — c'était l'origine du
+     tremblement pendant les déplacements. Le contraste est obtenu par le
+     contour noir du tracé SVG, qui ne coûte rien une fois rasterisé. */
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M5 2l14 9-6.2 1.4 3.4 6.4-3 1.6-3.4-6.5L5 19z' fill='%23ffffff' stroke='%23000000' stroke-width='2.2' stroke-linejoin='round'/></svg>") no-repeat center / contain;
 }
 
-/* Le curseur pulse en rouge Movix au moment du clic */
+/* Le curseur vire au rouge Movix au moment du clic */
 #movix-tz-cursor.tz-click {
-  transform-origin: 0 0;
-  filter: drop-shadow(0 0 6px #e50914);
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M5 2l14 9-6.2 1.4 3.4 6.4-3 1.6-3.4-6.5L5 19z' fill='%23e50914' stroke='%23ffffff' stroke-width='2.2' stroke-linejoin='round'/></svg>") no-repeat center / contain;
 }
 
 /* ── Inputs agrandis pour clavier TV ── */

@@ -46,7 +46,14 @@ navigation React vers `/movies`.
 | ⏹ | — | Stop (retour au début) |
 | 🔴 🟢 🟡 🔵 | Recherche / Accueil / À voir / Favoris | — |
 
-Le curseur est masqué dans le lecteur : les flèches y pilotent la vidéo.
+Le curseur n'est masqué **que pendant qu'une vidéo joue réellement** ; les
+flèches pilotent alors la lecture. Un appui sur OK met en pause et **rend
+aussitôt le curseur**, ce qui permet de changer de source ou de revenir en
+arrière en cours de film.
+
+La règle ne dépend plus de l'URL. Elle en dépendait jusqu'en v4.2, et comme la
+page de choix des sources est `/watch/movie/<id>`, le curseur y disparaissait
+alors qu'il n'y avait rien à lire et tout à cliquer.
 
 **Champ de recherche** : une fois le focus dans le champ, gauche/droite
 déplacent le curseur dans le texte et OK valide. Pour en ressortir et récupérer
@@ -74,11 +81,29 @@ Activé par défaut. Pour tout désactiver, passer `ADBLOCK` à `false` en haut 
 
 | Bloqué | Comment |
 |---|---|
-| Popups / popunders | `window.open()` renvoie `null` |
-| Popunders et redirections forcées des lecteurs embarqués | Les iframes tierces reçoivent un `sandbox` **sans** `allow-popups` ni `allow-top-navigation` |
-| Pubs et pixels de tracking invisibles | Les iframes masquées ou plus petites que 50×50 px sont supprimées |
+| Popunders | `window.open()` renvoie `null` s'il n'y a pas eu d'appui sur OK dans la seconde précédente |
+| Redirections forcées des lecteurs embarqués | Les iframes tierces reçoivent un `sandbox` **sans** `allow-popups` ni `allow-top-navigation` |
+| Pixels de tracking | Les iframes minuscules greffées directement sur `<body>` sont supprimées |
 | Pubs invisibles qui volent le clic OK | Les overlays plein écran, `z-index ≥ 1000`, sans contenu utilisable, sont supprimés |
 | Départ du site vers un domaine tiers | Les clics sur les liens externes sont annulés |
+
+### Ce qui passe volontairement
+
+**Les popups que vous déclenchez vous-même.** La page de lecture de Movix
+affiche « Une fenêtre publicitaire va s'ouvrir : tu peux la fermer dès qu'elle
+apparaît » avec un bouton **Voir une publicité**, et ne charge la vidéo
+qu'ensuite. Un blocage total de `window.open` empêchait donc **tout film de
+démarrer**. La règle appliquée est celle d'un bloqueur de popups classique :
+une popup ouverte dans la seconde qui suit un appui sur OK passe, celles qui
+partent d'un minuteur ou d'un événement de fond restent bloquées.
+
+Les domaines d'authentification passent également, sans quoi la connexion au
+compte serait impossible.
+
+**Une iframe n'est supprimée que si elle est minuscule *et* greffée directement
+sur `<body>`** — la signature d'un pixel traceur (celui de Movix est un 1×1 sans
+`src`). Un lecteur vidéo vit dans la mise en page et peut mesurer 0×0 le temps
+de se charger : le supprimer sur sa seule taille serait fatal à la lecture.
 
 **Ce qui n'est pas bloqué**, en toute honnêteté : les pubs insérées directement
 dans le flux vidéo côté serveur, et les pubs servies depuis le même domaine que

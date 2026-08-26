@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v4.2
+ * Movix TizenBrew — inject.js v4.3
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -20,7 +20,9 @@
  *  - Retour              → page précédente
  *  - Dans le lecteur     → contrôle direct de la balise <video>, curseur masqué
  *  - Touches couleurs    → raccourcis Recherche / Accueil / À voir / Favoris
- *  - Anti-pub            → popups, iframes tierces, pièges à clic (ADBLOCK)
+ *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
+ *                          Les popups que TU déclenches passent : Movix
+ *                          conditionne la lecture à un bouton publicitaire.
  *  - Fluidité TV         → vidéos décoratives figées
  *
  * Note compatibilité : pas de `?.` ni de syntaxe ES2020+, les WebViews Tizen
@@ -51,15 +53,16 @@
   margin: -3px 0 0 -8px;
   pointer-events: none;
   z-index: 2147483647;
-  will-change: transform;
-  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M5 2l14 9-6.2 1.4 3.4 6.4-3 1.6-3.4-6.5L5 19z' fill='%23ffffff' stroke='%23000000' stroke-width='1.6' stroke-linejoin='round'/></svg>") no-repeat center / contain;
-  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.6));
+  /* Pas de filter: drop-shadow ici. Un filtre se re-rastérise à chaque image,
+     et sur une position fractionnaire il scintille — c'était l'origine du
+     tremblement pendant les déplacements. Le contraste est obtenu par le
+     contour noir du tracé SVG, qui ne coûte rien une fois rasterisé. */
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M5 2l14 9-6.2 1.4 3.4 6.4-3 1.6-3.4-6.5L5 19z' fill='%23ffffff' stroke='%23000000' stroke-width='2.2' stroke-linejoin='round'/></svg>") no-repeat center / contain;
 }
 
-/* Le curseur pulse en rouge Movix au moment du clic */
+/* Le curseur vire au rouge Movix au moment du clic */
 #movix-tz-cursor.tz-click {
-  transform-origin: 0 0;
-  filter: drop-shadow(0 0 6px #e50914);
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M5 2l14 9-6.2 1.4 3.4 6.4-3 1.6-3.4-6.5L5 19z' fill='%23e50914' stroke='%23ffffff' stroke-width='2.2' stroke-linejoin='round'/></svg>") no-repeat center / contain;
 }
 
 /* ── Inputs agrandis pour clavier TV ── */
@@ -121,17 +124,28 @@ body::after {
   // à toucher pour tout désactiver d'un coup.
   //
   // Ce qui est bloqué :
-  //  - window.open()                → popups et popunders du site
+  //  - popunders                    → window.open sans activation utilisateur
+  //                                   récente ne renvoie rien
   //  - iframes tierces              → mises en sandbox sans allow-popups ni
   //                                   allow-top-navigation, ce qui coupe les
   //                                   popunders et les redirections forcées
   //                                   des lecteurs embarqués (inatteignables
   //                                   autrement, ils sont cross-origin)
-  //  - iframes invisibles/1px       → pubs et pixels de tracking, supprimées
+  //  - pixels de tracking           → iframes minuscules greffées sur <body>
   //  - overlays transparents        → les "click traps" plein écran qui volent
   //                                   le clic OK de la télécommande
   //  - clics vers un domaine tiers  → annulés, on ne quitte jamais Movix
+  //
+  // Ce qui passe volontairement :
+  //  - les popups déclenchées par un appui sur OK — Movix conditionne le
+  //    démarrage d'un film à un bouton « Voir une publicité »
+  //  - les domaines d'authentification (connexion au compte)
   const ADBLOCK = true;
+
+  // Horodatage du dernier appui sur OK : sert à distinguer une popup voulue par
+  // l'utilisateur d'un popunder ouvert en arrière-plan.
+  let lastUserClick = 0;
+  const USER_CLICK_WINDOW = 1200; // ms
 
   // Volontairement sans "allow-popups", "allow-top-navigation" ni
   // "allow-top-navigation-by-user-activation" : c'est là tout l'intérêt.
@@ -184,7 +198,14 @@ body::after {
       const r = f.getBoundingClientRect();
       const s = window.getComputedStyle(f);
       const hidden = s.display === "none" || s.visibility === "hidden" || s.opacity === "0";
-      if (hidden || r.width < 50 || r.height < 50) { f.remove(); continue; }
+      const tiny = hidden || r.width < 50 || r.height < 50;
+
+      // On ne supprime que les iframes minuscules greffées directement sur
+      // <body> : c'est la signature des pixels de tracking (celui de Movix est
+      // un 1×1 sans src, enfant direct de body). Un lecteur vidéo embarqué vit
+      // à l'intérieur de la mise en page et peut mesurer 0×0 le temps de se
+      // charger — le supprimer sur sa taille serait fatal à la lecture.
+      if (tiny && f.parentElement === document.body) { f.remove(); continue; }
       hardenIframe(f);
     }
 
@@ -227,9 +248,18 @@ body::after {
   function initAdBlock() {
     if (!ADBLOCK) return;
 
-    // Les popups de connexion restent autorisées, tout le reste est bloqué.
+    // Règle d'un bloqueur de popups classique : ce que l'utilisateur déclenche
+    // lui-même passe, le reste est bloqué.
+    //
+    // Indispensable ici : la page de lecture de Movix conditionne le
+    // démarrage du film à un bouton « Voir une publicité » qui ouvre une
+    // fenêtre. En neutralisant window.open sans exception, aucun film ne
+    // pouvait démarrer. Les popunders, eux, partent d'un minuteur ou d'un
+    // événement de fond, sans activation utilisateur récente : ils restent
+    // bloqués.
     const realOpen = window.open;
     window.open = function (url) {
+      if (Date.now() - lastUserClick < USER_CLICK_WINDOW) return realOpen.apply(window, arguments);
       if (url && isAuthURL(url)) return realOpen.apply(window, arguments);
       return null;
     };
@@ -260,8 +290,10 @@ body::after {
   // à saccader toute l'interface. On les fige partout sauf dans le lecteur.
   const PAUSE_DECOR_VIDEOS = true;
 
+  // Ne touche que les <video loop> : le lecteur ne boucle jamais, il est donc
+  // hors d'atteinte par construction, sans avoir à deviner la page courante.
   function freezeDecorVideos() {
-    if (!PAUSE_DECOR_VIDEOS || detectPage() === "player") return;
+    if (!PAUSE_DECOR_VIDEOS) return;
     for (const v of document.querySelectorAll("video[loop]")) {
       v.removeAttribute("autoplay");
       v.preload = "none";
@@ -274,7 +306,7 @@ body::after {
   function onPlayCapture(e) {
     const v = e.target;
     if (!PAUSE_DECOR_VIDEOS) return;
-    if (v && v.tagName === "VIDEO" && v.loop && detectPage() !== "player") v.pause();
+    if (v && v.tagName === "VIDEO" && v.loop) v.pause();
   }
 
   // ── Keycodes Samsung Tizen ─────────────────────────────────────────────────
@@ -329,8 +361,13 @@ body::after {
   }
 
   function paintCursor() {
-    // translate() plutôt que top/left : pas de recalcul de mise en page.
-    if (cursorEl) cursorEl.style.transform = "translate(" + cx + "px," + cy + "px)";
+    if (!cursorEl) return;
+    // translate3d plutôt que top/left : aucun recalcul de mise en page, et une
+    // couche GPU stable. Les coordonnées sont arrondies au pixel : les laisser
+    // fractionnaires faisait vibrer la flèche, rerastérisée à chaque image sur
+    // un décalage sous-pixel différent.
+    cursorEl.style.transform =
+      "translate3d(" + Math.round(cx) + "px," + Math.round(cy) + "px,0)";
   }
 
   // elementFromPoint renvoie le curseur lui-même s'il n'est pas transparent aux
@@ -379,6 +416,7 @@ body::after {
   function clickUnderCursor() {
     const el = elementUnderCursor();
     if (!el) return;
+    lastUserClick = Date.now(); // autorise la popup que ce clic pourrait ouvrir
     const o = mouseEventInit();
     el.dispatchEvent(new MouseEvent("mouseover", o));
     el.dispatchEvent(new MouseEvent("mousedown", o));
@@ -535,16 +573,6 @@ body::after {
     loopId = setInterval(tick, 16);
   }
 
-  // ── Détection page ─────────────────────────────────────────────────────────
-
-  function detectPage() {
-    const p = location.pathname;
-    if (p.includes("/watch") || p.includes("/player") || p.includes("/lecture")) return "player";
-    if (p.includes("/search") || p.includes("/recherche")) return "search";
-    if (p.includes("/movie") || p.includes("/film") || p.includes("/serie") || p.includes("/show") || p.includes("/anime")) return "detail";
-    return "home";
-  }
-
   // Vrai si l'utilisateur saisit du texte : on rend alors les flèches et Entrée
   // au champ, sinon la recherche est inutilisable.
   function isTyping() {
@@ -564,8 +592,29 @@ body::after {
   // Directement dans le DOM, pas dans un shadow DOM ni iframe. Beaucoup plus
   // fiable que de cliquer sur des boutons aux classes Tailwind instables.
 
+  // Le lecteur, c'est la plus grande <video> non décorative de la page.
+  // querySelector("video") tombait sur les vignettes animées de l'accueil.
   function getVideo() {
-    return document.querySelector("video");
+    let best = null, bestArea = 0;
+    for (const v of document.querySelectorAll("video")) {
+      if (v.loop) continue; // boucles décoratives, jamais le lecteur
+      const r = v.getBoundingClientRect();
+      const area = r.width * r.height;
+      if (area > bestArea) { bestArea = area; best = v; }
+    }
+    return best;
+  }
+
+  // On ne se fie plus à l'URL. detectPage() classait /movies en "detail" et
+  // /tv-shows en "home", et surtout il masquait le curseur sur toute page
+  // contenant "/watch" — y compris l'écran de choix des sources, où il faut
+  // justement pouvoir cliquer. Seul l'état réel de la vidéo fait foi :
+  // ça lit → les flèches pilotent la vidéo ; c'est en pause ou il n'y a rien
+  // → le curseur reprend la main. Un appui sur OK met en pause, donc rend le
+  // curseur, ce qui permet de changer de source en cours de lecture.
+  function isWatching() {
+    const v = getVideo();
+    return !!v && !v.paused;
   }
 
   function togglePlayPause() {
@@ -690,13 +739,24 @@ body::after {
   function onKeyDown(e) {
     const kc = e.keyCode;
 
-    // Dans le lecteur, les flèches pilotent la vidéo, pas le curseur.
-    if (detectPage() === "player") {
+    // Pendant la lecture, les flèches pilotent la vidéo, pas le curseur.
+    if (isWatching()) {
       if (handlePlayerKeys(kc)) {
         e.preventDefault();
         e.stopPropagation();
+        updateCursorVisibility(); // OK met en pause : le curseur doit revenir
       }
       return;
+    }
+
+    // Les touches médias restent actives même à l'arrêt : elles ne servent
+    // qu'à la vidéo et ne gênent jamais le curseur.
+    if ([KEY.PLAY_PAUSE, KEY.PLAY, KEY.PAUSE, KEY.FF, KEY.RW, KEY.STOP].includes(kc)) {
+      if (handlePlayerKeys(kc)) {
+        e.preventDefault();
+        updateCursorVisibility();
+        return;
+      }
     }
 
     if ([KEY.RED, KEY.GREEN, KEY.YELLOW, KEY.BLUE].includes(kc)) {
@@ -752,9 +812,13 @@ body::after {
   // Un seul minuteur : React peut remplacer le <body>, et la page peut passer
   // dans le lecteur où le curseur n'a rien à faire.
 
+  function updateCursorVisibility() {
+    if (cursorEl) cursorEl.style.display = isWatching() ? "none" : "block";
+  }
+
   function housekeeping() {
     ensureCursor();
-    if (cursorEl) cursorEl.style.display = detectPage() === "player" ? "none" : "block";
+    updateCursorVisibility();
     freezeDecorVideos();
   }
 
@@ -787,7 +851,7 @@ body::after {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 1000);
     registerKeys();
-    console.log("[Movix TizenBrew v4.2] curseur actif, page:", detectPage());
+    console.log("[Movix TizenBrew v4.3] curseur actif");
   }
 
   document.readyState === "loading"
