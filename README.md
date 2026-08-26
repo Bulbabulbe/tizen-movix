@@ -418,28 +418,41 @@ Notes utiles à qui reprendra ce module, chacune mesurée sur `movix.fun` :
 - **Le lecteur ne démarre qu'après l'écran publicitaire**, monté dans
   `#movix-overlay-root` en `fixed inset-0 z-50`.
 
-## Le compromis publicitaire, expliqué
+## La publicité : traitée à l'arrivée, jamais au départ
 
-Les lecteurs embarqués (SwiftFlow et similaires) posent **un élément
-transparent devant la vidéo**. Le clic dessus déclenche l'ouverture d'une page
-publicitaire, et le script ne lance la lecture **qu'après** cette ouverture.
-Si `window.open` renvoie `null`, il abandonne : le bouton Play ne fait alors
-plus rien du tout, et aucune erreur n'est affichée.
+Les lecteurs embarqués (SwiftFlow et similaires) posent un élément transparent
+devant la vidéo. Le clic dessus ouvre une page publicitaire, et le script ne
+lance la lecture **qu'après** cette ouverture. Toute interférence côté ouvreur
+le fait abandonner en silence : le bouton Play devient inerte, sans message.
 
-C'est pourquoi bloquer ces fenêtres est contre-productif. La règle retenue :
+Trois tentatives ont échoué pour cette raison, et sont documentées ici pour
+qu'on ne les refasse pas :
 
-| Situation | Comportement |
+| Tentative | Résultat |
 |---|---|
-| Fenêtre ouverte après un appui sur OK ou ▶ | **Autorisée**, puis refermée après 1,5 s |
-| Fenêtre ouverte sans appui récent (popunder) | Bloquée |
-| Fenêtre de connexion | Autorisée, jamais refermée |
-| Pub qui emporte la page entière | Retour automatique au film après 2,5 s |
+| `window.open` renvoie `null` | Play inerte |
+| Une seule popup autorisée par page | Play inerte à partir du lecteur |
+| Fermer la fenêtre depuis l'ouvreur | Play inerte |
 
-Trois réglages en haut de `inject.js` : `AD_POPUP_CLOSE_MS` (1500),
-`AD_RETURN_MS` (2500), `USER_CLICK_WINDOW` (1200).
+**`window.open` n'est donc plus touché du tout.** Le lecteur voit un navigateur
+ordinaire. La publicité est traitée à l'arrivée : TizenBrew injecte ce script
+dans chaque contexte, y compris l'onglet publicitaire, où `handleAdTab()` agit
+après 2,5 s (`AD_RETURN_MS`) :
 
-Deux protections ont été volontairement assouplies parce qu'elles rendaient le
-bouton Play inerte : la suppression des grands liens tiers posés sur le lecteur,
-et le détecteur de pièges à clic, qui ignore désormais tout overlay recouvrant
-plus de la moitié du lecteur. Ces éléments-là sont le déclencheur dont le
-lecteur a besoin.
+- onglet ouvert par une autre fenêtre → **il se referme lui-même**, et la page
+  du film redevient visible. Une fenêtre ouverte par script a le droit de
+  s'auto-fermer, y compris vers un autre domaine ;
+- page arrivée sans ouvreur, donc une redirection ayant remplacé le film →
+  retour en arrière, et à défaut retour à l'accueil.
+
+Les domaines d'authentification sont exclus : une fenêtre de connexion n'est
+jamais fermée.
+
+### Le bac à sable des iframes
+
+`allow-popups` **doit** figurer dans le `sandbox` appliqué aux iframes tierces,
+sans quoi le lecteur embarqué ne peut pas ouvrir sa publicité et ne démarre
+jamais. C'était la cause d'un blocage tenace.
+
+`allow-top-navigation` reste volontairement absent, et c'est là toute la
+protection : le lecteur peut ouvrir un onglet, jamais remplacer le nôtre.

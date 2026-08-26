@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.9
+ * Movix TizenBrew — inject.js v6.0
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -22,11 +22,10 @@
  *                          quand la <video> est hors de portée (lecteur iframe)
  *  - Plein écran         → touche bleue uniquement
  *  - Touches couleurs    → Recherche / Accueil / À voir
- *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
- *                          Les popups que TU déclenches passent : Movix
- *                          conditionne la lecture à un bouton publicitaire.
- *                          Chaque fenêtre de pub se referme seule après 1,5 s,
- *                          et une pub qui emporte la page nous ramène au film.
+ *  - Anti-pub            → iframes tierces, pixels de tracking, pièges à clic.
+ *                          window.open n'est PAS bloqué : les lecteurs ne
+ *                          démarrent qu'après ouverture de leur pub. C'est
+ *                          l'onglet publicitaire qui se referme lui-même.
  *  - Fluidité TV         → vidéos décoratives figées
  *
  * Note compatibilité : pas de `?.` ni de syntaxe ES2020+, les WebViews Tizen
@@ -121,37 +120,24 @@ button, [role="button"] {
   // à toucher pour tout désactiver d'un coup.
   //
   // Ce qui est bloqué :
-  //  - popunders                    → window.open sans activation utilisateur
-  //                                   récente ne renvoie rien
-  //  - iframes tierces              → mises en sandbox sans allow-popups ni
-  //                                   allow-top-navigation, ce qui coupe les
-  //                                   popunders et les redirections forcées
-  //                                   des lecteurs embarqués (inatteignables
-  //                                   autrement, ils sont cross-origin)
-  //  - pixels de tracking           → iframes minuscules greffées sur <body>
-  //  - overlays transparents        → les "click traps" plein écran qui volent
-  //                                   le clic OK de la télécommande
-  //  - clics vers un domaine tiers  → annulés, on ne quitte jamais Movix
+  //  - iframes tierces     → sandbox sans allow-top-navigation : elles peuvent
+  //                          ouvrir un onglet, jamais remplacer le nôtre
+  //  - pixels de tracking  → iframes minuscules greffées sur <body>
+  //  - pièges à clic       → overlays plein écran sans contenu utilisable,
+  //                          sauf ceux posés sur le lecteur (ce sont eux qui
+  //                          déclenchent la pub dont il a besoin)
+  //  - liens tiers cliqués → annulés, on ne quitte pas Movix par mégarde
   //
-  // Ce qui passe volontairement :
-  //  - les popups déclenchées par un appui sur OK — Movix conditionne le
-  //    démarrage d'un film à un bouton « Voir une publicité »
-  //  - les domaines d'authentification (connexion au compte)
+  // Ce qui n'est PAS bloqué, volontairement : window.open. Voir handleAdTab().
   const ADBLOCK = true;
 
-  // Horodatage du dernier appui sur OK : sert à distinguer une popup voulue par
-  // l'utilisateur d'un popunder ouvert en arrière-plan.
-  let lastUserClick = 0;
-  const USER_CLICK_WINDOW = 1200; // ms
-
-  // Délai avant fermeture automatique de la fenêtre publicitaire. Assez long
-  // pour qu'elle se charge réellement, assez court pour qu'on reste devant son
-  // film. Monter cette valeur si Movix refuse encore de lancer la lecture.
-  const AD_POPUP_CLOSE_MS = 1500;
-
-  // Volontairement sans "allow-popups", "allow-top-navigation" ni
-  // "allow-top-navigation-by-user-activation" : c'est là tout l'intérêt.
-  const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-presentation";
+  // allow-popups est indispensable : le lecteur embarqué ouvre une page
+  // publicitaire et ne lance la vidéo qu'ensuite. Sans ce droit, sa fenêtre
+  // est refusée par le bac à sable et le bouton Play reste inerte.
+  //
+  // allow-top-navigation reste volontairement absent, et c'est là toute la
+  // protection : le lecteur peut ouvrir un onglet, jamais remplacer le nôtre.
+  const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-presentation allow-popups";
 
   function sameSite(url) {
     try {
@@ -283,31 +269,18 @@ button, [role="button"] {
     // d'exactement une, pour son bouton « Voir une publicité ». Les suivantes
     // sont des pubs masquées : c'est l'une d'elles, posée sur le lecteur, qui a
     // détourné un appui sur Play vers un autre site.
-    const realOpen = window.open;
-    window.open = function (url) {
-      // Connexion : on n'y touche pas, la fenêtre doit rester ouverte.
-      if (url && isAuthURL(url)) return realOpen.apply(window, arguments);
-
-      // Toutes les popups issues d'un appui sont autorisées, sans limite de
-      // nombre. Les lecteurs embarqués (SwiftFlow et consorts) posent un
-      // élément transparent devant la vidéo : le clic déclenche le popunder,
-      // et le script ne lance la lecture *qu'après* l'ouverture réussie. Si
-      // window.open renvoie null, il abandonne — le bouton Play ne fait alors
-      // plus rien du tout. Il faut donc laisser ouvrir, puis refermer.
-      if (Date.now() - lastUserClick < USER_CLICK_WINDOW) {
-        const w = realOpen.apply(window, arguments);
-        if (w) {
-          // On a ouvert cette fenêtre, donc on peut la refermer, même si elle
-          // pointe vers un autre domaine. Movix obtient son ouverture de page
-          // publicitaire, et l'utilisateur reste devant son film sans avoir à
-          // trouver comment revenir — ce qui, sur une TV, n'est pas évident.
-          try { window.focus(); } catch (e) {}
-          setTimeout(function () { try { w.close(); } catch (e) {} }, AD_POPUP_CLOSE_MS);
-        }
-        return w;
-      }
-      return null;
-    };
+    // window.open n'est plus touché du tout.
+    //
+    // Toutes les variantes essayées — renvoyer null, limiter à une popup,
+    // refermer la fenêtre depuis l'ouvreur — ont fini par rendre le bouton
+    // Play inerte. Les lecteurs embarqués vérifient leur fenêtre publicitaire
+    // avant de lancer la lecture, et la moindre interférence les fait
+    // abandonner en silence. Une version antérieure, qui ne touchait à rien,
+    // lançait les films.
+    //
+    // La pub est donc traitée à l'arrivée et non au départ : c'est l'onglet
+    // publicitaire lui-même qui se referme, dans handleAdTab() plus bas.
+    // Le lecteur ne voit aucune différence avec un navigateur ordinaire.
     document.addEventListener("click", onClickCapture, true);
 
     // Ce callback se déclenche à chaque rendu React : il doit rester trivial.
@@ -490,7 +463,6 @@ button, [role="button"] {
   function clickUnderCursor() {
     const el = elementUnderCursor();
     if (!el) return;
-    lastUserClick = Date.now(); // autorise la popup que ce clic pourrait ouvrir
 
 
     const o = mouseEventInit();
@@ -973,10 +945,27 @@ button, [role="button"] {
   // connexion en cours.
   const AD_RETURN_MS = 2500;
 
-  function autoRetourSiPub() {
+  // Ce script s'exécute aussi sur l'onglet publicitaire, puisque TizenBrew
+  // l'injecte dans chaque contexte. On traite donc la pub depuis l'intérieur,
+  // sans jamais gêner le lecteur qui l'a ouverte.
+  //
+  //  - onglet ouvert par une autre fenêtre → il se referme lui-même. Une
+  //    fenêtre ouverte par script a le droit de s'auto-fermer, donc ça marche
+  //    même vers un autre domaine, et la page du film redevient visible.
+  //  - page arrivée sans ouvreur, c'est-à-dire une redirection qui a remplacé
+  //    le film → on revient en arrière.
+  function handleAdTab() {
     if (onMovix() || isAuthURL(location.href)) return;
+
+    const ouvertParUnAutreOnglet = !!window.opener;
+
     setTimeout(function () {
       if (onMovix() || isAuthURL(location.href)) return;
+
+      if (ouvertParUnAutreOnglet) {
+        try { window.close(); } catch (e) {}
+        return;
+      }
       const avant = location.href;
       window.history.back();
       setTimeout(function () {
@@ -988,7 +977,7 @@ button, [role="button"] {
   function init() {
     if (initialized) return;
     initialized = true;
-    autoRetourSiPub();
+    handleAdTab();
     injectStyle();
     initAdBlock();
     ensureCursor();
@@ -997,7 +986,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v5.9] curseur actif");
+    console.log("[Movix TizenBrew v6.0] curseur actif");
   }
 
   document.readyState === "loading"
