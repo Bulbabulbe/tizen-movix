@@ -20,10 +20,6 @@
   margin: -3px 0 0 -8px;
   pointer-events: none;
   z-index: 2147483647;
-  opacity: 1;
-  /* Fondu d'effacement après quelques secondes d'inactivité. Une transition
-     d'opacité seule reste une opération de composition, sans repaint. */
-  transition: opacity 0.25s linear;
   /* Pas de filter: drop-shadow ici. Un filtre se re-rastérise à chaque image,
      et sur une position fractionnaire il scintille — c'était l'origine du
      tremblement pendant les déplacements. Le contraste est obtenu par le
@@ -60,22 +56,5 @@ button, [role="button"] {
   min-width: 44px !important;
 }
 
-/* ── Indication raccourcis couleurs (coin bas droit) ── */
-body::after {
-  content: "🔴 Recherche  🟢 Accueil  🟡 À voir  🔵 Favoris";
-  position: fixed;
-  bottom: 12px;
-  right: 16px;
-  color: rgba(255,255,255,0.45);
-  font-size: 13px;
-  font-family: Arial, sans-serif;
-  pointer-events: none;
-  z-index: 99999;
-  background: rgba(0,0,0,0.5);
-  padding: 5px 10px;
-  border-radius: 6px;
-}
-
-/* Cache l'indicateur dans le player (plein écran) */
-:-webkit-full-screen body::after,
-:fullscreen body::after { display: none; }
+/* Le bandeau de raccourcis en bas à droite, hérité du projet d'origine, a été
+   supprimé : il restait affiché en permanence, y compris par-dessus un film. */

@@ -47,10 +47,19 @@ déplacent toujours le curseur, les touches médias pilotent toujours la vidéo.
 | ⏯ ⏵ ⏸ | Play / Pause |
 | ⏩ ⏪ | +10 s / −10 s |
 | ⏹ | Stop (retour au début) |
-| 🔴 🟢 🟡 🔵 | Recherche / Accueil / À voir / Favoris |
+| 🔴 | Recherche |
+| 🟢 | Accueil |
+| 🟡 | À voir |
+| 🔵 | **Plein écran** (bascule) |
 
-Le curseur s'efface après 3 secondes sans appui, pour ne pas rester planté au
-milieu d'un film, et revient à la première flèche. Il n'est jamais désactivé.
+Le lecteur de Movix n'offre pas de bouton plein écran utilisable à la
+télécommande, et ses commandes restent donc affichées par-dessus le film. La
+touche 🔵 bascule le plein écran sur la vidéo, ou sur l'iframe qui la contient
+quand le lecteur est embarqué.
+
+**Le curseur n'est jamais masqué, jamais estompé, jamais désactivé.** Chaque
+tentative d'être malin là-dessus — le masquer pendant la lecture, l'effacer
+après inactivité — a fini par laisser l'utilisateur sans pointeur.
 
 ### Il n'y a plus de « mode lecteur »
 
@@ -70,9 +79,15 @@ commandes du lecteur de Movix.
 Pour avancer ou reculer dans un film, ce sont les touches ⏩ ⏪ de la
 télécommande, déclarées dans `keys`.
 
-**Champ de recherche** : une fois le focus dans le champ, gauche/droite
-déplacent le curseur dans le texte et OK valide. Pour en ressortir et récupérer
-le curseur : **haut**, **bas**, ou **Retour**.
+**Champ de recherche et connexion** : les flèches continuent de déplacer le
+curseur, même quand un champ a le focus. La saisie passe par le clavier virtuel
+de Tizen, qui intercepte les touches avant la page ; rendre les flèches au champ
+ne servait donc à rien et privait du curseur en pleine connexion.
+
+**Le focus est maintenu dans le document principal.** S'il partait dans une
+iframe tierce, notre écouteur de touches ne recevait plus rien : le lecteur
+embarqué interprétait les flèches lui-même — montant le son ou avançant dans le
+film — pendant que le curseur paraissait mort.
 
 ### Connexion Google
 
@@ -141,6 +156,14 @@ suffisent à saccader toute l'interface d'une TV. Le lecteur n'est jamais touch�
 
 Autres points, sans réglage :
 
+- **Le pas du curseur est plafonné à 26 px** (`MAX_STEP`). C'est le correctif le
+  plus important : le pas vaut vitesse × temps écoulé, donc quand la TV
+  n'arrivait pas à suivre, les ticks se décalaient et le curseur se téléportait.
+  Mesuré sur un tick arrivant avec 120 ms de retard : **120 px d'un seul coup,
+  soit 110 px hors écran avant d'être ramené par la limite** — ce va-et-vient
+  était la vraie source du tremblement pendant le défilement. Plafonné, un
+  ralentissement de la TV ralentit le curseur au lieu de le faire sauter
+  (26 px, 16 px de dépassement). La traversée d'écran passe de 0,85 s à 1,17 s.
 - Le défilement n'est appliqué qu'à **30 Hz** (`SCROLL_INTERVAL`), pas à chaque
   tick : même vitesse moyenne, deux fois moins d'opérations, chacune deux fois
   plus grande. Soixante repaints par seconde dépassaient les moyens du panneau.

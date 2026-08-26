@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.0
+ * Movix TizenBrew — inject.js v5.1
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -15,11 +15,11 @@
  *  - Flèches             → déplacent le curseur (accélère si on maintient)
  *  - Bord haut/bas       → fait défiler, une fois le curseur collé au bord
  *  - Bord gauche/droite  → fait défiler la rangée de films sous le curseur
- *  - Haut/bas ou Retour  → quittent le champ de recherche
+ *  - Le curseur          → jamais masqué, jamais estompé, jamais désactivé
  *  - OK                  → clic à la position du curseur
  *  - Retour              → page précédente
  *  - Touches médias      → contrôlent la vidéo, toujours et partout
- *  - Touches couleurs    → raccourcis Recherche / Accueil / À voir / Favoris
+ *  - Touches couleurs    → Recherche / Accueil / À voir / PLEIN ÉCRAN (bleue)
  *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
  *                          Les popups que TU déclenches passent : Movix
  *                          conditionne la lecture à un bouton publicitaire.
@@ -53,10 +53,6 @@
   margin: -3px 0 0 -8px;
   pointer-events: none;
   z-index: 2147483647;
-  opacity: 1;
-  /* Fondu d'effacement après quelques secondes d'inactivité. Une transition
-     d'opacité seule reste une opération de composition, sans repaint. */
-  transition: opacity 0.25s linear;
   /* Pas de filter: drop-shadow ici. Un filtre se re-rastérise à chaque image,
      et sur une position fractionnaire il scintille — c'était l'origine du
      tremblement pendant les déplacements. Le contraste est obtenu par le
@@ -93,25 +89,8 @@ button, [role="button"] {
   min-width: 44px !important;
 }
 
-/* ── Indication raccourcis couleurs (coin bas droit) ── */
-body::after {
-  content: "🔴 Recherche  🟢 Accueil  🟡 À voir  🔵 Favoris";
-  position: fixed;
-  bottom: 12px;
-  right: 16px;
-  color: rgba(255,255,255,0.45);
-  font-size: 13px;
-  font-family: Arial, sans-serif;
-  pointer-events: none;
-  z-index: 99999;
-  background: rgba(0,0,0,0.5);
-  padding: 5px 10px;
-  border-radius: 6px;
-}
-
-/* Cache l'indicateur dans le player (plein écran) */
-:-webkit-full-screen body::after,
-:fullscreen body::after { display: none; }
+/* Le bandeau de raccourcis en bas à droite, hérité du projet d'origine, a été
+   supprimé : il restait affiché en permanence, y compris par-dessus un film. */
 `;
 
   function injectStyle() {
@@ -330,9 +309,21 @@ body::after {
   // d'une TV n'est pas garanti à 60 Hz, un déplacement par image serait deux
   // fois plus lent sur un panneau qui tombe à 30.
   const CURSOR_ID   = "movix-tz-cursor";
-  const SPEED_MIN   = 520;   // départ lent, pour viser précisément
-  const SPEED_MAX   = 2400;  // maintenu, on traverse l'écran en ~1 s
-  const ACCEL       = 2.4;   // facteur d'accélération par seconde
+  const SPEED_MIN   = 450;   // départ lent, pour viser précisément
+  const SPEED_MAX   = 1300;  // maintenu, on traverse l'écran en ~1,3 s
+  const ACCEL       = 2.2;   // facteur d'accélération par seconde
+
+  // Déplacement maximal autorisé en un seul tick, en pixels.
+  //
+  // C'est le correctif des « grands bonds ». Le pas vaut vitesse × temps
+  // écoulé ; quand la TV n'arrive pas à tenir le rythme, les ticks se
+  // décalent, le temps écoulé grimpe, et le curseur se téléporte de plus de
+  // 100 px d'un coup — puis se fait rattraper par la limite de l'écran. Ce
+  // va-et-vient est précisément ce qui donnait l'impression d'un tremblement
+  // pendant le défilement. Plafonner le pas fait qu'un ralentissement de la TV
+  // ralentit le curseur au lieu de le faire sauter.
+  const MAX_STEP    = 26;
+  const MAX_DT      = 0.033; // s — au-delà, on considère que la TV a décroché
   const SCROLL_SPEED = 1100;  // px/s — volontairement indépendant de la vitesse
                               // du curseur : indexer le défilement sur une
                               // vitesse qui accélère jusqu'à 2400 px/s faisait
@@ -340,7 +331,6 @@ body::after {
   const ROW_RECHECK  = 200;   // ms entre deux recherches de rangée sous le curseur
   const KEY_TIMEOUT  = 260;   // sans nouvel appui, la touche est jugée relâchée
   const HOVER_MS     = 120;   // fréquence des mousemove de synthèse
-  const IDLE_HIDE_MS = 3000;  // effacement du curseur après ce délai sans appui
 
   // Le défilement n'est appliqué qu'à 30 Hz, pas à chaque tick. Même vitesse
   // moyenne, mais deux fois moins d'opérations de défilement, chacune deux fois
@@ -350,7 +340,6 @@ body::after {
   // mais plus saccadé.
   const SCROLL_INTERVAL = 33; // ms
   let lastScrollAt = 0;
-  let lastActivity = 0;
 
   let cursorEl = null;
   let cx = 0, cy = 0;
@@ -524,7 +513,7 @@ body::after {
 
   function tick() {
     const now = Date.now();
-    const dt = Math.min(0.05, (now - lastTick) / 1000); // plafond anti-saut
+    const dt = Math.min(MAX_DT, (now - lastTick) / 1000);
     lastTick = now;
 
     let dx = 0, dy = 0;
@@ -544,7 +533,7 @@ body::after {
     }
 
     speed = Math.min(SPEED_MAX, speed * (1 + ACCEL * dt));
-    const step = speed * dt;
+    const step = Math.min(MAX_STEP, speed * dt);
     const scrollStep = SCROLL_SPEED * dt;
     const vw = window.innerWidth  || 1280;
     const vh = window.innerHeight || 720;
@@ -603,20 +592,6 @@ body::after {
     loopId = setInterval(tick, 16);
   }
 
-  // Vrai si l'utilisateur saisit du texte : on rend alors les flèches et Entrée
-  // au champ, sinon la recherche est inutilisable.
-  function isTyping() {
-    const ae = document.activeElement;
-    if (!ae) return false;
-    const tag = ae.tagName;
-    return tag === "INPUT" || tag === "TEXTAREA" || ae.isContentEditable === true;
-  }
-
-  function leaveField() {
-    const ae = document.activeElement;
-    if (ae && ae.blur) ae.blur();
-  }
-
   // ── Player : manipulation directe de la balise <video> ────────────────────
   //
   // Directement dans le DOM, pas dans un shadow DOM ni iframe. Beaucoup plus
@@ -633,6 +608,33 @@ body::after {
       if (area > bestArea) { bestArea = area; best = v; }
     }
     return best;
+  }
+
+  // Plein écran sur la vidéo si on y a accès, sinon sur l'iframe qui la
+  // contient — un lecteur embarqué est cross-origin, sa <video> est hors de
+  // portée, mais l'iframe elle-même est bien dans notre document.
+  function biggestIframe() {
+    let best = null, bestArea = 0;
+    for (const f of document.querySelectorAll("iframe")) {
+      const r = f.getBoundingClientRect();
+      const area = r.width * r.height;
+      if (area > bestArea) { bestArea = area; best = f; }
+    }
+    return bestArea > 40000 ? best : null;
+  }
+
+  function toggleFullscreen() {
+    const d = document;
+    const exit = d.exitFullscreen || d.webkitExitFullscreen || d.mozCancelFullScreen;
+    if (d.fullscreenElement || d.webkitFullscreenElement || d.mozFullScreenElement) {
+      if (exit) { exit.call(d); return true; }
+      return false;
+    }
+    const target = getVideo() || biggestIframe() || d.documentElement;
+    const req = target.requestFullscreen || target.webkitRequestFullscreen || target.mozRequestFullScreen;
+    if (!req) return false;
+    try { req.call(target); } catch (e) { return false; }
+    return true;
   }
 
   function togglePlayPause() {
@@ -742,12 +744,11 @@ body::after {
         return false;
       }
 
-      case KEY.BLUE: {
-        const btns = Array.from(document.querySelectorAll("button"));
-        const fav = btns.find(b => b.textContent.trim().includes("Favoris"));
-        if (fav) { moveCursorTo(fav); fav.click(); return true; }
-        return false;
-      }
+      // Le lecteur de Movix n'offre pas de bouton plein écran utilisable à la
+      // télécommande, et ses commandes restent donc affichées par-dessus le
+      // film. La touche bleue bascule le plein écran sur la vidéo elle-même.
+      case KEY.BLUE:
+        return toggleFullscreen();
     }
     return false;
   }
@@ -781,37 +782,26 @@ body::after {
       if (handleColorKeys(kc)) { e.preventDefault(); return; }
     }
 
-    const typing = isTyping();
     const now = Date.now();
 
-    // Toute touche de navigation réveille le curseur s'il s'était effacé.
-    if ([KEY.LEFT, KEY.RIGHT, KEY.UP, KEY.DOWN, KEY.ENTER, KEY.SPACE].includes(kc)) {
-      showCursor();
-    }
-
+    // Aucune exception, y compris quand un champ de saisie a le focus. La
+    // saisie de texte passe par le clavier virtuel de Tizen, qui intercepte les
+    // touches avant la page ; rendre les flèches au champ ne servait donc à
+    // rien et privait l'utilisateur du curseur en pleine connexion.
     switch (kc) {
-      // Gauche/droite déplacent le curseur dans le texte pendant une saisie.
-      case KEY.LEFT:  if (typing) break; held.left  = now; startCursorLoop(); e.preventDefault(); break;
-      case KEY.RIGHT: if (typing) break; held.right = now; startCursorLoop(); e.preventDefault(); break;
-
-      // Haut et bas quittent le champ. C'est la porte de sortie du clavier :
-      // sans elle, une fois le focus dans la recherche, plus aucune flèche ne
-      // revenait au curseur et il fallait tuer l'application.
-      case KEY.UP:    if (typing) leaveField(); held.up   = now; startCursorLoop(); e.preventDefault(); break;
-      case KEY.DOWN:  if (typing) leaveField(); held.down = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.LEFT:  held.left  = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.RIGHT: held.right = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.UP:    held.up    = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.DOWN:  held.down  = now; startCursorLoop(); e.preventDefault(); break;
 
       case KEY.ENTER:
       case KEY.SPACE:
-        // Entrée dans un champ = valider la recherche, comportement natif.
-        if (typing) break;
         clickUnderCursor();
         e.preventDefault();
         break;
 
       case KEY.BACK:
       case KEY.RETURN:
-        // Deuxième sortie du champ de saisie, la plus intuitive.
-        if (typing) { leaveField(); e.preventDefault(); break; }
         // Sans historique, on laisse passer : c'est ce qui permet de quitter le
         // module et de revenir au launcher TizenBrew.
         if (window.history.length > 1) {
@@ -835,18 +825,18 @@ body::after {
   // Un seul minuteur : React peut remplacer le <body>, et la page peut passer
   // dans le lecteur où le curseur n'a rien à faire.
 
-  // Le curseur s'efface tout seul après quelques secondes sans appui, pour ne
-  // pas rester planté au milieu d'un film. Il revient à la première flèche.
-  // C'est un simple fondu d'opacité : contrairement à display:none, ça ne peut
-  // pas laisser l'utilisateur sans pointeur, puisque rien n'est désactivé.
-  function showCursor() {
-    lastActivity = Date.now();
-    if (cursorEl) cursorEl.style.opacity = "1";
-  }
-
+  // Le curseur n'est jamais masqué, jamais estompé, jamais désactivé. Chaque
+  // tentative d'être malin là-dessus — masquage dans le lecteur, effacement
+  // après inactivité — a fini par laisser l'utilisateur sans pointeur.
+  //
+  // Le focus est aussi ramené au document principal : s'il part dans une iframe
+  // tierce, notre écouteur de touches ne reçoit plus rien du tout. Le lecteur
+  // embarqué se met alors à interpréter les flèches lui-même — il monte le son
+  // ou avance dans le film — pendant que le curseur paraît mort.
   function housekeeping() {
     ensureCursor();
-    if (cursorEl && Date.now() - lastActivity > IDLE_HIDE_MS) cursorEl.style.opacity = "0";
+    const ae = document.activeElement;
+    if (ae && ae.tagName === "IFRAME") ae.blur();
     freezeDecorVideos();
   }
 
@@ -879,7 +869,7 @@ body::after {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 1000);
     registerKeys();
-    console.log("[Movix TizenBrew v5.0] curseur actif");
+    console.log("[Movix TizenBrew v5.1] curseur actif");
   }
 
   document.readyState === "loading"
