@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v6.5
+ * Movix TizenBrew — inject.js v6.6
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -16,7 +16,10 @@
  *  - Bord haut/bas       → défile par paliers, curseur collé au bord
  *  - Bord gauche/droite  → fait défiler la rangée de films sous le curseur
  *  - Le curseur          → jamais masqué, jamais estompé, jamais désactivé
- *  - OK                  → clic à la position du curseur
+ *  - OK                  → clic à la position du curseur ; sur un lecteur
+ *                          embarqué, lui donne le focus pour que la
+ *                          télécommande pilote SON bouton Play (25 s, puis
+ *                          le curseur reprend la main automatiquement)
  *  - Retour              → page précédente, et ramène toujours sur Movix
  *  - Touches médias      → contrôlent la vidéo ; ▶ clique le bouton de lecture
  *                          quand la <video> est hors de portée (lecteur iframe)
@@ -478,6 +481,17 @@ button, [role="button"] {
     const el = elementUnderCursor();
     if (!el) return;
 
+    // OK sur un lecteur embarqué : on lui donne le focus au lieu de lui envoyer
+    // un clic qui ne franchira jamais la frontière de l'iframe. Les touches
+    // réelles de la télécommande lui parviennent alors directement, et son
+    // propre bouton Play devient utilisable. Le focus revient tout seul au bout
+    // de IFRAME_FOCUS_MS, donc on ne reste pas prisonnier du lecteur.
+    if (el.tagName === "IFRAME") {
+      try { el.focus(); } catch (e) {}
+      iframeFocusedAt = Date.now();
+      flashCursor();
+      return;
+    }
 
     const o = mouseEventInit();
 
@@ -942,10 +956,37 @@ button, [role="button"] {
   // tierce, notre écouteur de touches ne reçoit plus rien du tout. Le lecteur
   // embarqué se met alors à interpréter les flèches lui-même — il monte le son
   // ou avance dans le film — pendant que le curseur paraît mort.
+  // Durée pendant laquelle on laisse le lecteur embarqué garder le focus.
+  //
+  // Un lecteur d'un autre domaine est hors d'atteinte du curseur : un clic de
+  // synthèse ne franchit pas la frontière de l'iframe. Le seul moyen d'appuyer
+  // sur son bouton Play est de lui donner le focus, pour que les touches réelles
+  // de la télécommande lui parviennent directement.
+  //
+  // La v5.1 faisait exactement l'inverse : elle lui reprenait le focus toutes
+  // les 400 ms. Le lecteur ne pouvait donc jamais être piloté — c'est la cause
+  // du « Play ne fait rien » sur tous les lecteurs embarqués.
+  //
+  // Le focus lui est rendu automatiquement au bout de ce délai : nos minuteurs
+  // continuent de tourner même quand l'iframe a le focus, donc on ne peut pas
+  // rester coincé dedans.
+  const IFRAME_FOCUS_MS = 25000;
+  let iframeFocusedAt = 0;
+
   function housekeeping() {
     ensureCursor();
+
     const ae = document.activeElement;
-    if (ae && ae.tagName === "IFRAME") ae.blur();
+    if (ae && ae.tagName === "IFRAME") {
+      if (!iframeFocusedAt) iframeFocusedAt = Date.now();
+      if (Date.now() - iframeFocusedAt > IFRAME_FOCUS_MS) {
+        ae.blur();
+        iframeFocusedAt = 0;
+      }
+    } else {
+      iframeFocusedAt = 0;
+    }
+
     freezeDecorVideos();
   }
 
@@ -1058,7 +1099,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v6.5] curseur actif");
+    console.log("[Movix TizenBrew v6.6] curseur actif");
   }
 
   document.readyState === "loading"
