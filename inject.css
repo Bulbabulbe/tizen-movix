@@ -1,35 +1,32 @@
-/* Movix TizenBrew — inject.css v2 */
+/* Movix TizenBrew — inject.css v4 */
+/* Source de reference. A l execution, c est la copie embarquee dans */
+/* inject.js qui est injectee : TizenBrew ne charge que le fichier "main". */
 
-/* Pas de curseur souris sur TV */
+/* Pas de curseur souris natif : on dessine le nôtre */
 * { cursor: none !important; }
 
 /* Scrollbars inutiles */
 ::-webkit-scrollbar { display: none; }
 
-/* ── Anneau de focus — reprend le rouge Movix (#e50914) ── */
-.tz-focus {
-  outline: 4px solid #e50914 !important;
-  outline-offset: 3px !important;
-  box-shadow: 0 0 0 6px rgba(229, 9, 20, 0.35) !important;
-  transform: scale(1.06) !important;
-  transition: transform 0.1s linear !important;
-  z-index: 9999 !important;
-  position: relative !important;
+/* ── Curseur virtuel piloté par la télécommande ── */
+#movix-tz-cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 38px;
+  height: 38px;
+  margin: -3px 0 0 -3px;
+  pointer-events: none;
+  z-index: 2147483647;
+  will-change: transform;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M5 2l14 9-6.2 1.4 3.4 6.4-3 1.6-3.4-6.5L5 19z' fill='%23ffffff' stroke='%23000000' stroke-width='1.6' stroke-linejoin='round'/></svg>") no-repeat center / contain;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.6));
 }
 
-/* Cards films : effet de zoom plus marqué */
-.tz-focus[class*="card"],
-.tz-focus[class*="Card"],
-.tz-focus[class*="poster"],
-.tz-focus[class*="Poster"] {
-  transform: scale(1.1) !important;
-}
-
-/* Boutons : léger fond rouge */
-button.tz-focus,
-.tz-focus button,
-[role="button"].tz-focus {
-  background: rgba(229, 9, 20, 0.15) !important;
+/* Le curseur pulse en rouge Movix au moment du clic */
+#movix-tz-cursor.tz-click {
+  transform-origin: 0 0;
+  filter: drop-shadow(0 0 6px #e50914);
 }
 
 /* ── Inputs agrandis pour clavier TV ── */

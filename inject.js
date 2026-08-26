@@ -1,18 +1,25 @@
 /**
- * Movix TizenBrew — inject.js v3.3
+ * Movix TizenBrew — inject.js v4.0
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
  * JS (champ "main"). inject.css reste dans le dépôt comme source de référence.
  *
- * Stratégie (inchangée) :
- *  - Navigation D-pad    → algorithme directionnel sur éléments focusables
- *  - Player play/pause   → video.play() / video.pause() directement (plus fiable que les boutons)
- *  - Player seek         → video.currentTime += / -= 10
- *  - Retour player       → bouton "← Retour"
+ * v4 : la navigation par focus est remplacée par un curseur virtuel.
+ * Movix est un site pensé pour la souris ; viser les éléments avec un
+ * algorithme directionnel restait approximatif et cassait dès que Movix
+ * changeait ses classes CSS. Un curseur atteint 100 % de la page et ne dépend
+ * d'aucun sélecteur. Le défilement se fait en poussant le curseur contre le
+ * haut ou le bas de l'écran.
+ *
+ *  - Flèches             → déplacent le curseur (accélère si on maintient)
+ *  - Bord haut/bas       → fait défiler la page
+ *  - OK                  → clic à la position du curseur
+ *  - Retour              → page précédente
+ *  - Dans le lecteur     → contrôle direct de la balise <video>, curseur masqué
  *  - Touches couleurs    → raccourcis Recherche / Accueil / À voir / Favoris
  *  - Anti-pub            → popups, iframes tierces, pièges à clic (ADBLOCK)
- *  - Fluidité TV         → vidéos décoratives figées, défilement instantané
+ *  - Fluidité TV         → vidéos décoratives figées
  *
  * Note compatibilité : pas de `?.` ni de syntaxe ES2020+, les WebViews Tizen
  * 3.x/4.x (Chromium 47/56) refusent de parser le fichier entier sinon.
@@ -24,36 +31,31 @@
   // ── CSS embarqué (source : inject.css) ────────────────────────────────────
   const STYLE_ID = "movix-tizenbrew-style";
   const CSS = `
-/* Pas de curseur souris sur TV */
+/* Pas de curseur souris natif : on dessine le nôtre */
 * { cursor: none !important; }
 
 /* Scrollbars inutiles */
 ::-webkit-scrollbar { display: none; }
 
-/* ── Anneau de focus — reprend le rouge Movix (#e50914) ── */
-.tz-focus {
-  outline: 4px solid #e50914 !important;
-  outline-offset: 3px !important;
-  box-shadow: 0 0 0 6px rgba(229, 9, 20, 0.35) !important;
-  transform: scale(1.06) !important;
-  transition: transform 0.1s linear !important;
-  z-index: 9999 !important;
-  position: relative !important;
+/* ── Curseur virtuel piloté par la télécommande ── */
+#movix-tz-cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 38px;
+  height: 38px;
+  margin: -3px 0 0 -3px;
+  pointer-events: none;
+  z-index: 2147483647;
+  will-change: transform;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M5 2l14 9-6.2 1.4 3.4 6.4-3 1.6-3.4-6.5L5 19z' fill='%23ffffff' stroke='%23000000' stroke-width='1.6' stroke-linejoin='round'/></svg>") no-repeat center / contain;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.6));
 }
 
-/* Cards films : effet de zoom plus marqué */
-.tz-focus[class*="card"],
-.tz-focus[class*="Card"],
-.tz-focus[class*="poster"],
-.tz-focus[class*="Poster"] {
-  transform: scale(1.1) !important;
-}
-
-/* Boutons : léger fond rouge */
-button.tz-focus,
-.tz-focus button,
-[role="button"].tz-focus {
-  background: rgba(229, 9, 20, 0.15) !important;
+/* Le curseur pulse en rouge Movix au moment du clic */
+#movix-tz-cursor.tz-click {
+  transform-origin: 0 0;
+  filter: drop-shadow(0 0 6px #e50914);
 }
 
 /* ── Inputs agrandis pour clavier TV ── */
@@ -151,6 +153,7 @@ body::after {
 
   // Overlay plein écran, au-dessus de tout, sans contenu utile = piège à clic.
   function isClickTrap(el) {
+    if (el.id === CURSOR_ID) return false;
     const s = window.getComputedStyle(el);
     if (s.position !== "fixed" && s.position !== "absolute") return false;
     if (s.pointerEvents === "none") return false;
@@ -210,8 +213,8 @@ body::after {
     document.addEventListener("click", onClickCapture, true);
 
     // Ce callback se déclenche à chaque rendu React : il doit rester trivial.
-    // L'ancienne version appelait querySelectorAll sur chaque nœud ajouté,
-    // ce qui plombait toute l'interface. On se contente de lever un drapeau.
+    // Appeler querySelectorAll sur chaque nœud ajouté plombait l'interface.
+    // On se contente de lever un drapeau que le balayage périodique consomme.
     new MutationObserver((ms) => {
       for (const m of ms) {
         for (const n of m.addedNodes) {
@@ -232,7 +235,6 @@ body::after {
   // (logos Netflix, Disney+, Apple TV… servis par giphy et tenor). Sur un PC
   // ça ne se voit pas, sur le CPU d'une TV huit boucles vidéo en fond suffisent
   // à saccader toute l'interface. On les fige partout sauf dans le lecteur.
-  // Passer à false pour les réactiver.
   const PAUSE_DECOR_VIDEOS = true;
 
   function freezeDecorVideos() {
@@ -244,7 +246,7 @@ body::after {
     }
   }
 
-  // Elles démarrent au survol/focus : on les rattrape à la source plutôt que
+  // Elles démarrent au survol : on les rattrape à la source plutôt que
   // d'attendre le prochain passage du minuteur.
   function onPlayCapture(e) {
     const v = e.target;
@@ -263,137 +265,139 @@ body::after {
     SPACE: 32,
   };
 
-  // ── Sélecteurs focusables pour la navigation hors player ──────────────────
-  const FOCUSABLE = [
-    "nav a", "header a",
-    "input[type='search']", "input[placeholder]",
-    "button:not([disabled])",
-    "[role='button']", "[role='tab']",
-    "a[href]",
-  ].join(", ");
+  // ── Curseur virtuel ────────────────────────────────────────────────────────
+  //
+  // Vitesses en pixels par seconde, pas par image : le taux de rafraîchissement
+  // d'une TV n'est pas garanti à 60 Hz, un déplacement par image serait deux
+  // fois plus lent sur un panneau qui tombe à 30.
+  const CURSOR_ID   = "movix-tz-cursor";
+  const SPEED_MIN   = 520;   // départ lent, pour viser précisément
+  const SPEED_MAX   = 2400;  // maintenu, on traverse l'écran en ~1 s
+  const ACCEL       = 2.4;   // facteur d'accélération par seconde
+  const EDGE        = 80;    // à moins de 80 px du bord, la page défile
+  const SCROLL_MULT = 1.3;   // le défilement suit la vitesse du curseur
+  const KEY_TIMEOUT = 260;   // sans nouvel appui, la touche est jugée relâchée
+  const HOVER_MS    = 120;   // fréquence des mousemove de synthèse
 
-  let currentFocus = null;
-  let initialized  = false;
-  let lastPath     = location.pathname;
+  let cursorEl = null;
+  let cx = 0, cy = 0;
+  let speed = SPEED_MIN;
+  let loopId = null;
+  let lastTick = 0;
+  let lastHover = 0;
+  const held = { left: 0, right: 0, up: 0, down: 0 };
 
-  // ── Utilitaires ────────────────────────────────────────────────────────────
-
-  // Pas de getComputedStyle ici : c'est un recalcul de style par élément, et on
-  // en testait une centaine à chaque appui sur une flèche. offsetParent === null
-  // couvre display:none, le seul cas vraiment fréquent, pour bien moins cher.
-  function isVisible(el) {
-    if (el.hasAttribute("disabled")) return false;
-    if (el.offsetParent === null) return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  }
-
-  // Liste des cibles mise en cache. Sans ça, chaque appui sur une flèche
-  // reconstruisait la liste complète et mesurait ~100 éléments : c'était la
-  // cause principale de la latence de la navigation.
-  let focusCache = null;
-  let focusCacheAt = 0;
-
-  function invalidateFocusCache() {
-    focusCache = null;
-  }
-
-  function getFocusable() {
-    const now = Date.now();
-    if (focusCache && now - focusCacheAt < 400) return focusCache;
-
-    const vh = window.innerHeight || 720;
-    const vw = window.innerWidth || 1280;
-    const out = [];
-    for (const el of document.querySelectorAll(FOCUSABLE)) {
-      if (!isVisible(el)) continue;
-      const r = el.getBoundingClientRect();
-      // On écarte ce qui est très loin hors écran. Sinon une flèche pouvait
-      // sauter dans le pied de page au lieu d'aller à la carte d'à côté.
-      // La marge d'un écran entier laisse toujours de quoi défiler.
-      if (r.bottom < -vh || r.top > vh * 2) continue;
-      if (r.right < -vw || r.left > vw * 2) continue;
-      out.push(el);
+  function ensureCursor() {
+    if (cursorEl && document.contains(cursorEl)) return;
+    cursorEl = document.getElementById(CURSOR_ID);
+    if (!cursorEl) {
+      cursorEl = document.createElement("div");
+      cursorEl.id = CURSOR_ID;
+      document.body.appendChild(cursorEl);
+      cx = (window.innerWidth || 1280) / 2;
+      cy = (window.innerHeight || 720) / 2;
     }
-    focusCache = out;
-    focusCacheAt = now;
-    return out;
+    paintCursor();
   }
 
-  // Vrai si l'utilisateur est en train de saisir du texte : on rend alors
-  // gauche/droite et Entrée au champ, sinon la recherche est inutilisable.
-  function isTyping() {
-    const ae = document.activeElement;
-    if (!ae) return false;
-    const tag = ae.tagName;
-    return tag === "INPUT" || tag === "TEXTAREA" || ae.isContentEditable === true;
+  function paintCursor() {
+    // translate() plutôt que top/left : pas de recalcul de mise en page.
+    if (cursorEl) cursorEl.style.transform = "translate(" + cx + "px," + cy + "px)";
   }
 
-  // ── Navigation directionnelle ──────────────────────────────────────────────
-
-  function findNext(dir) {
-    const els = getFocusable();
-    if (!els.length) return null;
-    if (!currentFocus || !document.contains(currentFocus)) return els[0];
-
-    // Distances de bord à bord + recouvrement sur l'axe perpendiculaire.
-    // L'ancienne version comparait des centres, ce qui envoyait la sélection
-    // en diagonale au lieu de suivre la ligne ou la colonne.
-    const cr = currentFocus.getBoundingClientRect();
-    let best = null, bestScore = Infinity;
-
-    for (const el of els) {
-      if (el === currentFocus) continue;
-      const r = el.getBoundingClientRect();
-      let primary = 0, overlap = 0;
-
-      switch (dir) {
-        case "left":
-          primary = cr.left - r.right;
-          overlap = Math.min(cr.bottom, r.bottom) - Math.max(cr.top, r.top);
-          break;
-        case "right":
-          primary = r.left - cr.right;
-          overlap = Math.min(cr.bottom, r.bottom) - Math.max(cr.top, r.top);
-          break;
-        case "up":
-          primary = cr.top - r.bottom;
-          overlap = Math.min(cr.right, r.right) - Math.max(cr.left, r.left);
-          break;
-        case "down":
-          primary = r.top - cr.bottom;
-          overlap = Math.min(cr.right, r.right) - Math.max(cr.left, r.left);
-          break;
-      }
-      if (primary < -5) continue; // l'élément est derrière nous
-
-      // Un élément aligné avec le focus courant bat toujours un élément en
-      // diagonale : c'est ce qui rend la navigation prévisible.
-      const misalignment = overlap > 0 ? 0 : -overlap;
-      const score = Math.max(primary, 0) + misalignment * 4;
-      if (score < bestScore) { bestScore = score; best = el; }
-    }
-    return best;
+  // elementFromPoint renvoie le curseur lui-même s'il n'est pas transparent aux
+  // clics ; le CSS le met en pointer-events:none, ceci n'est qu'une ceinture.
+  function elementUnderCursor() {
+    const el = document.elementFromPoint(cx, cy);
+    if (el && el.id === CURSOR_ID) return null;
+    return el;
   }
 
-  function setFocus(el) {
+  function mouseEventInit() {
+    return { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+  }
+
+  function sendHover() {
+    const el = elementUnderCursor();
     if (!el) return;
-    if (currentFocus) {
-      currentFocus.classList.remove("tz-focus");
-      currentFocus.removeAttribute("data-tz");
-    }
-    currentFocus = el;
-    el.classList.add("tz-focus");
-    el.setAttribute("data-tz", "1");
-    el.focus({ preventScroll: true });
-    // Défilement instantané : le "smooth" empilait une animation par appui,
-    // ce qui donnait cette impression de télécommande qui traîne.
-    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    el.dispatchEvent(new MouseEvent("mouseover", mouseEventInit()));
+    el.dispatchEvent(new MouseEvent("mousemove", mouseEventInit()));
   }
 
-  function navigate(dir) {
-    const n = findNext(dir);
-    if (n) setFocus(n);
+  function clickUnderCursor() {
+    const el = elementUnderCursor();
+    if (!el) return;
+    const o = mouseEventInit();
+    el.dispatchEvent(new MouseEvent("mouseover", o));
+    el.dispatchEvent(new MouseEvent("mousedown", o));
+    if (el.focus) el.focus();
+    el.dispatchEvent(new MouseEvent("mouseup", o));
+    el.dispatchEvent(new MouseEvent("click", o));
+
+    if (cursorEl) {
+      cursorEl.classList.add("tz-click");
+      setTimeout(() => { if (cursorEl) cursorEl.classList.remove("tz-click"); }, 150);
+    }
+  }
+
+  function moveCursorTo(el) {
+    const r = el.getBoundingClientRect();
+    cx = r.left + r.width / 2;
+    cy = r.top + r.height / 2;
+    paintCursor();
+  }
+
+  function tick() {
+    const now = Date.now();
+    const dt = Math.min(0.05, (now - lastTick) / 1000); // plafond anti-saut
+    lastTick = now;
+
+    let dx = 0, dy = 0;
+    if (now - held.left  < KEY_TIMEOUT) dx -= 1;
+    if (now - held.right < KEY_TIMEOUT) dx += 1;
+    if (now - held.up    < KEY_TIMEOUT) dy -= 1;
+    if (now - held.down  < KEY_TIMEOUT) dy += 1;
+
+    if (dx === 0 && dy === 0) {
+      speed = SPEED_MIN;
+      clearInterval(loopId);
+      loopId = null;
+      sendHover(); // survol final, pour les aperçus au repos
+      return;
+    }
+
+    speed = Math.min(SPEED_MAX, speed * (1 + ACCEL * dt));
+    const step = speed * dt;
+    const vw = window.innerWidth  || 1280;
+    const vh = window.innerHeight || 720;
+
+    cx += dx * step;
+    cy += dy * step;
+
+    // Contre le bord haut ou bas, le curseur ne sort pas : c'est la page qui
+    // défile. C'est ce qui rend tout le site atteignable à la télécommande.
+    if (dy < 0 && cy < EDGE)      { window.scrollBy(0, -step * SCROLL_MULT); cy = EDGE; }
+    if (dy > 0 && cy > vh - EDGE) { window.scrollBy(0,  step * SCROLL_MULT); cy = vh - EDGE; }
+
+    if (cx < 0) cx = 0;
+    if (cx > vw - 1) cx = vw - 1;
+    if (cy < 0) cy = 0;
+    if (cy > vh - 1) cy = vh - 1;
+
+    paintCursor();
+    if (now - lastHover > HOVER_MS) { lastHover = now; sendHover(); }
+  }
+
+  function startCursorLoop() {
+    if (loopId) return;
+    lastTick = Date.now();
+    // setInterval plutôt que requestAnimationFrame : rAF est suspendu dès que
+    // la WebView ne se juge pas visible, et un curseur figé rend la
+    // télécommande inutilisable. La boucle s'arrête d'elle-même dès qu'aucune
+    // flèche n'est maintenue, donc rien ne tourne au repos. Les déplacements
+    // sont calculés en px/seconde, ils restent identiques quel que soit le
+    // taux de rafraîchissement réel de la TV.
+    loopId = setInterval(tick, 16);
   }
 
   // ── Détection page ─────────────────────────────────────────────────────────
@@ -406,11 +410,19 @@ body::after {
     return "home";
   }
 
+  // Vrai si l'utilisateur saisit du texte : on rend alors les flèches et Entrée
+  // au champ, sinon la recherche est inutilisable.
+  function isTyping() {
+    const ae = document.activeElement;
+    if (!ae) return false;
+    const tag = ae.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || ae.isContentEditable === true;
+  }
+
   // ── Player : manipulation directe de la balise <video> ────────────────────
   //
-  // D'après le HTML : <video class="w-full h-full object-contain ...">
-  // Directement dans le DOM, pas dans un shadow DOM ni iframe.
-  // Beaucoup plus fiable que de cliquer sur des boutons aux classes Tailwind instables.
+  // Directement dans le DOM, pas dans un shadow DOM ni iframe. Beaucoup plus
+  // fiable que de cliquer sur des boutons aux classes Tailwind instables.
 
   function getVideo() {
     return document.querySelector("video");
@@ -431,10 +443,8 @@ body::after {
     return true;
   }
 
-  // Bouton "← Retour" du player : button.absolute.top-4.left-4
-  // C'est le seul bouton avec aria-hidden="false" et la classe "absolute top-4 left-4"
+  // Bouton "← Retour" du player, repéré par son texte ou son icône.
   function clickRetour() {
-    // Cherche le bouton Retour par son contenu texte ou ses classes de position
     const btns = document.querySelectorAll("button");
     for (const b of btns) {
       if (b.textContent.trim().includes("Retour") || b.querySelector("path[d*='M10 19l-7-7']")) {
@@ -473,14 +483,12 @@ body::after {
         return seek(-10);
 
       case KEY.UP: {
-        // Volume +
         const v = getVideo();
         if (v) { v.volume = Math.min(1, v.volume + 0.1); return true; }
         return false;
       }
 
       case KEY.DOWN: {
-        // Volume -
         const v = getVideo();
         if (v) { v.volume = Math.max(0, v.volume - 0.1); return true; }
         return false;
@@ -508,9 +516,9 @@ body::after {
     switch (kc) {
       case KEY.RED: {
         const inp = document.querySelector("input[type='search'], input[placeholder*='film'], input[placeholder*='Rechercher']");
-        if (inp) { setFocus(inp); inp.click(); return true; }
+        if (inp) { moveCursorTo(inp); inp.focus(); return true; }
         const sl = document.querySelector("a[href*='search'], a[href*='recherche']");
-        if (sl) { sl.click(); return true; }
+        if (sl) { moveCursorTo(sl); sl.click(); return true; }
         return false;
       }
 
@@ -521,18 +529,16 @@ body::after {
       }
 
       case KEY.YELLOW: {
-        // Bouton "À voir" page film
         const btns = Array.from(document.querySelectorAll("button"));
         const aVoir = btns.find(b => b.textContent.trim().includes("À voir") || b.textContent.trim().includes("voir"));
-        if (aVoir) { aVoir.click(); return true; }
+        if (aVoir) { moveCursorTo(aVoir); aVoir.click(); return true; }
         return false;
       }
 
       case KEY.BLUE: {
-        // Bouton "Favoris" page film
         const btns = Array.from(document.querySelectorAll("button"));
         const fav = btns.find(b => b.textContent.trim().includes("Favoris"));
-        if (fav) { fav.click(); return true; }
+        if (fav) { moveCursorTo(fav); fav.click(); return true; }
         return false;
       }
     }
@@ -542,50 +548,43 @@ body::after {
   // ── Handler principal ──────────────────────────────────────────────────────
 
   function onKeyDown(e) {
-    const kc   = e.keyCode;
-    const page = detectPage();
+    const kc = e.keyCode;
 
-    // Dans le player : tout est géré par handlePlayerKeys
-    if (page === "player") {
+    // Dans le lecteur, les flèches pilotent la vidéo, pas le curseur.
+    if (detectPage() === "player") {
       if (handlePlayerKeys(kc)) {
         e.preventDefault();
         e.stopPropagation();
-        return;
       }
-      return; // Laisse passer les touches non gérées (ex: touches système)
+      return;
     }
 
-    // Touches couleurs sur toutes les pages hors player
     if ([KEY.RED, KEY.GREEN, KEY.YELLOW, KEY.BLUE].includes(kc)) {
       if (handleColorKeys(kc)) { e.preventDefault(); return; }
     }
 
     const typing = isTyping();
+    const now = Date.now();
 
-    // Navigation D-pad
     switch (kc) {
-      // Gauche/droite déplacent le curseur quand on saisit du texte.
-      case KEY.LEFT:  if (typing) break; navigate("left");  e.preventDefault(); break;
-      case KEY.RIGHT: if (typing) break; navigate("right"); e.preventDefault(); break;
-      case KEY.UP:    navigate("up");    e.preventDefault(); break;
-      case KEY.DOWN:  navigate("down");  e.preventDefault(); break;
+      // Pendant une saisie, les flèches appartiennent au champ de texte.
+      case KEY.LEFT:  if (typing) break; held.left  = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.RIGHT: if (typing) break; held.right = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.UP:    if (typing) break; held.up    = now; startCursorLoop(); e.preventDefault(); break;
+      case KEY.DOWN:  if (typing) break; held.down  = now; startCursorLoop(); e.preventDefault(); break;
 
       case KEY.ENTER:
       case KEY.SPACE:
         // Entrée dans un champ = valider la recherche, comportement natif.
         if (typing) break;
-        if (currentFocus) {
-          const tag = currentFocus.tagName.toLowerCase();
-          if (tag === "input") { currentFocus.focus(); currentFocus.click(); }
-          else currentFocus.click();
-          e.preventDefault();
-        }
+        clickUnderCursor();
+        e.preventDefault();
         break;
 
       case KEY.BACK:
       case KEY.RETURN:
-        // S'il n'y a pas d'historique, on laisse passer : c'est ce qui permet
-        // de quitter le module et de revenir au launcher TizenBrew.
+        // Sans historique, on laisse passer : c'est ce qui permet de quitter le
+        // module et de revenir au launcher TizenBrew.
         if (window.history.length > 1) {
           window.history.back();
           e.preventDefault();
@@ -594,60 +593,23 @@ body::after {
     }
   }
 
-  // ── Focus initial selon la page ────────────────────────────────────────────
-
-  // Un seul minuteur en attente : les mutations React déclenchaient des dizaines
-  // de initFocus() empilés, qui se battaient pour poser le focus.
-  let focusTimer = null;
-
-  function initFocus() {
-    if (focusTimer) clearTimeout(focusTimer);
-    focusTimer = setTimeout(() => {
-      focusTimer = null;
-      const page = detectPage();
-      let target = null;
-
-      if (page === "player") {
-        // Dans le player, on ne met pas de focus visuel —
-        // les touches sont gérées directement sur la vidéo
-        return;
-      } else if (page === "detail") {
-        // Bouton "Regarder" (rouge, premier gros bouton)
-        const btns = Array.from(document.querySelectorAll("button"));
-        target = btns.find(b => b.textContent.trim().includes("Regarder"));
-      } else if (page === "search") {
-        target = document.querySelector("input[type='search'], input[placeholder]");
-      } else {
-        // Accueil : bouton "Lecture" du hero
-        const btns = Array.from(document.querySelectorAll("button"));
-        target = btns.find(b => b.textContent.trim().includes("Lecture"));
-      }
-
-      const els = getFocusable();
-      if (target && isVisible(target)) setFocus(target);
-      else if (els.length) setFocus(els[0]);
-    }, 700);
+  function onKeyUp(e) {
+    switch (e.keyCode) {
+      case KEY.LEFT:  held.left  = 0; break;
+      case KEY.RIGHT: held.right = 0; break;
+      case KEY.UP:    held.up    = 0; break;
+      case KEY.DOWN:  held.down  = 0; break;
+    }
   }
 
-  // ── Observer SPA React Router ──────────────────────────────────────────────
+  // ── Entretien périodique ───────────────────────────────────────────────────
+  // Un seul minuteur : React peut remplacer le <body>, et la page peut passer
+  // dans le lecteur où le curseur n'a rien à faire.
 
-  function setupObserver() {
-    setInterval(() => {
-      if (location.pathname !== lastPath) {
-        lastPath = location.pathname;
-        currentFocus = null;
-        invalidateFocusCache();
-        initFocus();
-      }
-    }, 250);
-
-    new MutationObserver((ms) => {
-      if (ms.some(m => m.addedNodes.length > 3)
-          && (!currentFocus || !document.contains(currentFocus))
-          && detectPage() !== "player") {
-        initFocus();
-      }
-    }).observe(document.body, { childList: true, subtree: true });
+  function housekeeping() {
+    ensureCursor();
+    if (cursorEl) cursorEl.style.display = detectPage() === "player" ? "none" : "block";
+    freezeDecorVideos();
   }
 
   // ── Enregistrement touches Tizen ──────────────────────────────────────────
@@ -666,18 +628,20 @@ body::after {
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
+  let initialized = false;
+
   function init() {
     if (initialized) return;
     initialized = true;
     injectStyle();
     initAdBlock();
+    ensureCursor();
     document.addEventListener("play", onPlayCapture, true);
-    setInterval(freezeDecorVideos, 2500);
-    registerKeys();
     document.addEventListener("keydown", onKeyDown, true);
-    setupObserver();
-    initFocus();
-    console.log("[Movix TizenBrew v3.3] page:", detectPage());
+    document.addEventListener("keyup", onKeyUp, true);
+    setInterval(housekeeping, 1000);
+    registerKeys();
+    console.log("[Movix TizenBrew v4.0] curseur actif, page:", detectPage());
   }
 
   document.readyState === "loading"
