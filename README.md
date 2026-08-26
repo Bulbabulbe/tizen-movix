@@ -42,7 +42,7 @@ déplacent toujours le curseur, les touches médias pilotent toujours la vidéo.
 | ↑ ↓ ← → | Déplacent le curseur (accélère si maintenu) |
 | Curseur collé au bord ↑ ou ↓ | Fait défiler la page |
 | Curseur collé au bord ← ou → | Fait défiler la rangée de films |
-| OK | Clic à la position du curseur |
+| OK | Clic à la position du curseur — **sur le film, bascule le plein écran** |
 | Retour | Page précédente, ou sortie du champ de recherche |
 | ⏯ ⏵ ⏸ | Play / Pause |
 | ⏩ ⏪ | +10 s / −10 s |
@@ -52,11 +52,20 @@ déplacent toujours le curseur, les touches médias pilotent toujours la vidéo.
 | 🟡 | À voir |
 | 🔵 | Plein écran (raccourci, voir ci-dessous) |
 
-### Plein écran : un bouton à cliquer
+### Plein écran : trois façons, la première suffit
 
-Un bouton **⛶** apparaît en bas à droite dès qu'un lecteur est présent sur la
-page. Il se clique au curseur, comme n'importe quel bouton. La touche 🔵 fait la
-même chose, pour qui préfère un raccourci.
+1. **Amener le curseur sur le film et appuyer sur OK.** C'est tout. Un second
+   OK au même endroit ressort du plein écran.
+2. Le bouton **⛶** en bas à droite, qui apparaît dès qu'un lecteur est présent.
+3. La touche 🔵 bleue.
+
+Pourquoi OK sur le film ? Parce que c'est le seul geste utile à cet endroit :
+quand le lecteur est une iframe d'un autre domaine, un clic de synthèse n'entre
+pas dans son document et ne ferait donc strictement rien. Et parce que sur une
+Samsung One Remote, atteindre la touche bleue demande **trois appuis** sur le
+bouton « 123 / points colorés » (une fois pour les réglages rapides, deux fois
+pour le pavé numérique, trois fois pour les touches couleurs) — inutilisable au
+quotidien.
 
 Pourquoi fabriquer ce bouton plutôt qu'utiliser celui du lecteur ? Deux raisons
 vérifiées :

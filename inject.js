@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v5.2
+ * Movix TizenBrew — inject.js v5.3
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -19,7 +19,7 @@
  *  - OK                  → clic à la position du curseur
  *  - Retour              → page précédente
  *  - Touches médias      → contrôlent la vidéo, toujours et partout
- *  - Plein écran         → bouton ⛶ cliquable en bas à droite (ou touche bleue)
+ *  - Plein écran         → OK sur le film (ou bouton ⛶, ou touche bleue)
  *  - Touches couleurs    → Recherche / Accueil / À voir
  *  - Anti-pub            → popunders, iframes tierces, pièges à clic (ADBLOCK).
  *                          Les popups que TU déclenches passent : Movix
@@ -459,6 +459,18 @@ button, [role="button"] {
     const el = elementUnderCursor();
     if (!el) return;
     lastUserClick = Date.now(); // autorise la popup que ce clic pourrait ouvrir
+
+    // OK sur le lecteur lui-même = plein écran. C'est le seul geste utile à cet
+    // endroit : quand le lecteur est une iframe d'un autre domaine, un clic de
+    // synthèse n'entre pas dans son document et ne ferait donc rien du tout.
+    // Ça évite d'imposer la touche bleue, qui demande trois appuis sur le
+    // bouton « 123 » d'une Samsung One Remote pour être seulement accessible.
+    if (el.tagName === "VIDEO" || (el.tagName === "IFRAME" && el === biggestIframe())) {
+      toggleFullscreen();
+      flashCursor();
+      return;
+    }
+
     const o = mouseEventInit();
     el.dispatchEvent(new MouseEvent("mouseover", o));
     el.dispatchEvent(new MouseEvent("mousedown", o));
@@ -466,10 +478,14 @@ button, [role="button"] {
     el.dispatchEvent(new MouseEvent("mouseup", o));
     el.dispatchEvent(new MouseEvent("click", o));
 
-    if (cursorEl) {
-      cursorEl.classList.add("tz-click");
-      setTimeout(() => { if (cursorEl) cursorEl.classList.remove("tz-click"); }, 150);
-    }
+    flashCursor();
+  }
+
+  // Retour visuel : le curseur vire au rouge le temps d'un clic.
+  function flashCursor() {
+    if (!cursorEl) return;
+    cursorEl.classList.add("tz-click");
+    setTimeout(() => { if (cursorEl) cursorEl.classList.remove("tz-click"); }, 150);
   }
 
   // ── Défilement ─────────────────────────────────────────────────────────────
@@ -926,7 +942,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 1000);
     registerKeys();
-    console.log("[Movix TizenBrew v5.2] curseur actif");
+    console.log("[Movix TizenBrew v5.3] curseur actif");
   }
 
   document.readyState === "loading"
