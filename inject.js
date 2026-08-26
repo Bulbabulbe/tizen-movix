@@ -1,5 +1,5 @@
 /**
- * Movix TizenBrew — inject.js v6.1
+ * Movix TizenBrew — inject.js v6.2
  * Basé sur https://github.com/Mathr81/movix-tizenbrew (auteur original : Mathr81).
  * Ce fork met le module au format TizenBrew actuel (packageType "mods") et
  * embarque le CSS directement ici, car TizenBrew ne charge qu'un seul fichier
@@ -22,8 +22,9 @@
  *                          quand la <video> est hors de portée (lecteur iframe)
  *  - Plein écran         → touche bleue uniquement
  *  - Touches couleurs    → Recherche / Accueil / À voir
- *  - Anti-pub            → DÉSACTIVÉ en v6.1 (ADBLOCK = false), diagnostic.
- *                          Seul reste actif : l'onglet de pub se referme seul.
+ *  - Anti-pub            → DÉSACTIVÉ (ADBLOCK = false), diagnostic en cours.
+ *  - Onglet de pub       → le focus revient sur le film, l'onglet se referme
+ *                          au bout de 10 s. Actif même si ADBLOCK est false.
  *  - Fluidité TV         → vidéos décoratives figées
  *
  * Note compatibilité : pas de `?.` ni de syntaxe ES2020+, les WebViews Tizen
@@ -1003,10 +1004,43 @@ button, [role="button"] {
     }, AD_RETURN_MS);
   }
 
+  // Délai avant de refermer l'onglet publicitaire resté en arrière-plan.
+  // Généreux : le lecteur vérifie parfois que sa fenêtre est toujours ouverte
+  // avant de lancer la vidéo. Trop court, la lecture ne démarre pas.
+  const AD_TAB_CLOSE_MS = 10000;
+
+  // On n'empêche rien et on ne renvoie rien de faux : la fenêtre est réellement
+  // ouverte, le lecteur peut la vérifier, la lecture démarre. On se contente de
+  // reprendre le focus pour que la TV réaffiche le film, puis de refermer
+  // l'onglet resté en arrière-plan.
+  //
+  // C'est indispensable ici : TizenBrew n'attache son débogueur qu'à une seule
+  // cible, donc ce script ne s'exécute PAS dans le nouvel onglet. Rien ne peut
+  // l'y refermer, et sans barre d'onglets une TV n'offre aucun retour. Ce
+  // traitement doit donc se faire depuis la page qui a ouvert la fenêtre.
+  //
+  // Actif même quand ADBLOCK vaut false : ce n'est pas du blocage, c'est ce qui
+  // évite de rester coincé.
+  function keepFocusOnMovix() {
+    const realOpen = window.open;
+    window.open = function (url) {
+      const w = realOpen.apply(window, arguments);
+      if (!w || (url && isAuthURL(url))) return w;
+
+      const revenir = function () { try { window.focus(); } catch (e) {} };
+      revenir();
+      setTimeout(revenir, 300);
+      setTimeout(revenir, 1200);
+      setTimeout(function () { try { w.close(); } catch (e) {} }, AD_TAB_CLOSE_MS);
+      return w;
+    };
+  }
+
   function init() {
     if (initialized) return;
     initialized = true;
     handleAdTab();
+    keepFocusOnMovix();
     injectStyle();
     initAdBlock();
     ensureCursor();
@@ -1015,7 +1049,7 @@ button, [role="button"] {
     document.addEventListener("keyup", onKeyUp, true);
     setInterval(housekeeping, 400);
     registerKeys();
-    console.log("[Movix TizenBrew v6.1] curseur actif");
+    console.log("[Movix TizenBrew v6.2] curseur actif");
   }
 
   document.readyState === "loading"
